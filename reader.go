@@ -3,6 +3,7 @@ package ns
 import (
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"syscall"
 )
@@ -119,6 +120,14 @@ func (lr *LineReader) processInput(input string) ProcessingCode {
 		return CodeTerminate
 	case KEY_DEL:
 		lr.deleteAtCurrentPos()
+	case KEY_TAB:
+		autoComplete := lr.completer(string(lr.buffer[:lr.bufferOffset]), string(lr.buffer[lr.bufferOffset:]))
+		if autoComplete != nil {
+			if len(autoComplete) == 1 {
+				ac := autoComplete[0]
+				lr.completeText([]rune(ac.Name))
+			}
+		}
 	case KEY_BACKSPACE:
 		if lr.bufferOffset > 0 {
 			lr.bufferOffset--
@@ -143,6 +152,28 @@ func (lr *LineReader) insertText(input []rune) {
 	lr.renderFromCursor()
 	lr.bufferOffset = newBufferOffset
 	lr.setCursorPos()
+}
+
+func (lr *LineReader) completeText(input []rune) {
+	// hunt back to the previous either space, or beginning of the text from the current cursor position
+	inputStr := string(input)
+
+	for i := lr.bufferOffset - 1; i >= 0; i-- {
+		if lr.buffer[i] == ' ' || i == 0 {
+			j := i
+			if lr.buffer[i] == ' ' {
+				j++
+			}
+			strPrefix := string(lr.buffer[j:lr.bufferOffset])
+
+			if !strings.HasPrefix(inputStr, strPrefix) {
+				return
+			}
+
+			runePrefix := []rune(strPrefix)
+			lr.insertText(input[len(runePrefix):])
+		}
+	}
 }
 
 func (lr *LineReader) deleteAtCurrentPos() {
