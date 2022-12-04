@@ -3,6 +3,7 @@ package ns
 const (
 	KEY_CTRL_C      = "\x03"
 	KEY_CTRL_D      = "\x04"
+	KEY_TAB         = "\x09"
 	KEY_ENTER       = "\x0D"
 	KEY_ESCAPE      = "\x1B"
 	KEY_BACKSPACE   = "\x7F"
