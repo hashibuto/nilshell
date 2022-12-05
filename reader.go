@@ -46,15 +46,15 @@ func NewLineReader(completer Completer, resizeChan chan os.Signal) *LineReader {
 
 // Read will read a single command from the command line and can be interrupted by pressing <enter>, <ctrl+c>, or <ctrl+d>.
 // Read responds to changes in the terminal window size.
-func (lr *LineReader) Read(prompt string, history *History, completionLimit int) (string, bool, error) {
+func (lr *LineReader) Read(ns *NilShell) (string, bool, error) {
 	cursorRow, _ := getCursorPos()
 	setCursorPos(cursorRow, 1)
 	lr.cursorRow = cursorRow
 	lr.bufferOffset = 0
 	lr.buffer = []rune{}
-	fmt.Printf("%s", prompt)
+	fmt.Printf("%s", ns.Prompt)
 
-	lr.prompt = []rune(prompt)
+	lr.prompt = []rune(ns.Prompt)
 	iBuf := make([]byte, 20)
 	for {
 		n, err := os.Stdin.Read(iBuf)
@@ -62,7 +62,7 @@ func (lr *LineReader) Read(prompt string, history *History, completionLimit int)
 			return "", false, err
 		}
 		iString := string(iBuf[:n])
-		code := lr.processInput(iString, history, completionLimit)
+		code := lr.processInput(iString, ns)
 		switch code {
 		case CodeComplete:
 			return string(lr.buffer), false, nil
@@ -89,18 +89,18 @@ func (lr *LineReader) resizeWatcher() {
 }
 
 // processInput executes one iteration of input processing which would occur in the interactive read loop
-func (lr *LineReader) processInput(input string, history *History, completionLimit int) ProcessingCode {
+func (lr *LineReader) processInput(input string, n *NilShell) ProcessingCode {
 	lr.lock.Lock()
 	defer lr.lock.Unlock()
 
 	switch input {
 	case KEY_UP_ARROW:
-		cmd := history.Older()
+		cmd := n.History.Older()
 		if len(cmd) > 0 {
 			lr.setText([]rune(cmd))
 		}
 	case KEY_DOWN_ARROW:
-		cmd := history.Newer()
+		cmd := n.History.Newer()
 		if len(cmd) > 0 {
 			lr.setText([]rune(cmd))
 		}
@@ -139,10 +139,10 @@ func (lr *LineReader) processInput(input string, history *History, completionLim
 			if len(autoComplete) == 1 {
 				ac := autoComplete[0]
 				lr.completeText([]rune(ac.Name))
-			} else if len(autoComplete) > 1 && len(autoComplete) <= completionLimit {
-				lr.displayAutocomplete(autoComplete)
-			} else if len(autoComplete) > completionLimit {
-				lr.displayTooManyAutocomplete(autoComplete)
+			} else if len(autoComplete) > 1 && len(autoComplete) <= n.AutoCompleteLimit {
+				lr.displayAutocomplete(autoComplete, n)
+			} else if len(autoComplete) > n.AutoCompleteLimit {
+				lr.displayTooManyAutocomplete(autoComplete, n)
 			}
 		}
 	case KEY_BACKSPACE:
@@ -158,11 +158,11 @@ func (lr *LineReader) processInput(input string, history *History, completionLim
 }
 
 // displayTooManyAutocomplete displays the too many autocomplete suggestions message
-func (lr *LineReader) displayTooManyAutocomplete(autoComplete []*AutoComplete) {
+func (lr *LineReader) displayTooManyAutocomplete(autoComplete []*AutoComplete, ns *NilShell) {
 	y, _ := getCursorPos()
 	fmt.Printf("\r\n")
 	y++
-	fmt.Printf("%d suggestions, too many to display...", len(autoComplete))
+	fmt.Printf("%s%d suggestions, too many to display...%s", ns.AutoCompleteTooMuchStyle, len(autoComplete), CODE_RESET)
 	y++
 	fmt.Println()
 	if y > lr.winHeight {
@@ -173,9 +173,9 @@ func (lr *LineReader) displayTooManyAutocomplete(autoComplete []*AutoComplete) {
 }
 
 // displayAutocomplete displays the autocomplete suggestions
-func (lr *LineReader) displayAutocomplete(autoComplete []*AutoComplete) {
+func (lr *LineReader) displayAutocomplete(autoComplete []*AutoComplete, ns *NilShell) {
 	y, _ := getCursorPos()
-	fmt.Printf("\r\n")
+	fmt.Printf("\r\n%s", ns.AutoCompleteSuggestStyle)
 	y++
 	total := 0
 	for _, ac := range autoComplete {
@@ -192,7 +192,7 @@ func (lr *LineReader) displayAutocomplete(autoComplete []*AutoComplete) {
 		fmt.Printf("%-20s", text)
 	}
 	y++
-	fmt.Println()
+	fmt.Printf("%s\n\r", CODE_RESET)
 	if y > lr.winHeight {
 		y = lr.winHeight
 	}

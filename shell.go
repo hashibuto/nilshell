@@ -26,6 +26,9 @@ type NilShell struct {
 	History           *History
 	AutoCompleteLimit int // Maximum number of autocompletes to display
 
+	AutoCompleteSuggestStyle string
+	AutoCompleteTooMuchStyle string
+
 	preState   *term.State
 	sigs       chan os.Signal
 	lineReader *LineReader
@@ -72,7 +75,7 @@ func (n *NilShell) ReadUntilTerm() error {
 	}()
 
 	for !n.isShutdown {
-		cmdString, isTerminate, err := n.lineReader.Read(n.Prompt, n.History, n.AutoCompleteLimit)
+		cmdString, isTerminate, err := n.lineReader.Read(n)
 		if err != nil {
 			return err
 		}

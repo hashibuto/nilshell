@@ -10,6 +10,8 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+var CODE_RESET = "\033[0m"
+
 // getCursorPos returns the current cursor position (row, col).  row and col start from 1
 func getCursorPos() (int, int) {
 	b := make([]byte, 10)
