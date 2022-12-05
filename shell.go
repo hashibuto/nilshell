@@ -1,7 +1,6 @@
 package ns
 
 import (
-	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
@@ -55,25 +54,6 @@ func NewShell(prompt string, onComplete Completer, onExecute Executor) *NilShell
 // ReadUntilTerm blocks, receiving commands until the user requests termination.  Commands are processed via the executor callback
 // provided at initialization time.  Likewise for command completion.
 func (n *NilShell) ReadUntilTerm() error {
-	fd := int(os.Stdin.Fd())
-	preState, err := term.MakeRaw(fd)
-	if err != nil {
-		return err
-	}
-	n.preState = preState
-
-	// Try our best not to leave the terminal in raw mode
-	defer func() {
-		err := recover()
-		if err != nil {
-			fmt.Printf("Caught panic before exiting\n%v", err)
-		}
-		term.Restore(fd, n.preState)
-		if err != nil {
-			os.Exit(1)
-		}
-	}()
-
 	for !n.isShutdown {
 		cmdString, isTerminate, err := n.lineReader.Read(n)
 		if err != nil {

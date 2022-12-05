@@ -6,6 +6,8 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+
+	"golang.org/x/term"
 )
 
 type ProcessingCode int8
@@ -47,6 +49,25 @@ func NewLineReader(completer Completer, resizeChan chan os.Signal) *LineReader {
 // Read will read a single command from the command line and can be interrupted by pressing <enter>, <ctrl+c>, or <ctrl+d>.
 // Read responds to changes in the terminal window size.
 func (lr *LineReader) Read(ns *NilShell) (string, bool, error) {
+	fd := int(os.Stdin.Fd())
+	preState, err := term.MakeRaw(fd)
+	if err != nil {
+		return "", false, err
+	}
+	ns.preState = preState
+
+	// Try our best not to leave the terminal in raw mode
+	defer func() {
+		err := recover()
+		if err != nil {
+			fmt.Printf("Caught panic before exiting\n%v", err)
+		}
+		term.Restore(fd, ns.preState)
+		if err != nil {
+			os.Exit(1)
+		}
+	}()
+
 	cursorRow, _ := getCursorPos()
 	setCursorPos(cursorRow, 1)
 	lr.cursorRow = cursorRow
