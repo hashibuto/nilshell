@@ -29,10 +29,8 @@ type LineReader struct {
 	cursorRow    int
 }
 
-func NewLineReader(
-	completer Completer,
-	resizeChan chan os.Signal,
-) *LineReader {
+// NewLineReader creates a new LineReader object
+func NewLineReader(completer Completer, resizeChan chan os.Signal) *LineReader {
 	lr := &LineReader{
 		completer:  completer,
 		resizeChan: resizeChan,
@@ -46,7 +44,9 @@ func NewLineReader(
 	return lr
 }
 
-func (lr *LineReader) Read(prompt string) (string, bool, error) {
+// Read will read a single command from the command line and can be interrupted by pressing <enter>, <ctrl+c>, or <ctrl+d>.
+// Read responds to changes in the terminal window size.
+func (lr *LineReader) Read(prompt string, history *History, completionLimit int) (string, bool, error) {
 	cursorRow, _ := getCursorPos()
 	setCursorPos(cursorRow, 1)
 	lr.cursorRow = cursorRow
@@ -62,7 +62,7 @@ func (lr *LineReader) Read(prompt string) (string, bool, error) {
 			return "", false, err
 		}
 		iString := string(iBuf[:n])
-		code := lr.processInput(iString)
+		code := lr.processInput(iString, history, completionLimit)
 		switch code {
 		case CodeComplete:
 			return string(lr.buffer), false, nil
@@ -75,6 +75,8 @@ func (lr *LineReader) Read(prompt string) (string, bool, error) {
 	}
 }
 
+// resizeWatcher waits for input on the resize channel and resizes accordingly.  when the channel receives a SIGTERM the thread exists.
+// the SIGTERM originates internally, not from outside the process.
 func (lr *LineReader) resizeWatcher() {
 	for {
 		sig := <-lr.resizeChan
@@ -86,11 +88,22 @@ func (lr *LineReader) resizeWatcher() {
 	}
 }
 
-func (lr *LineReader) processInput(input string) ProcessingCode {
+// processInput executes one iteration of input processing which would occur in the interactive read loop
+func (lr *LineReader) processInput(input string, history *History, completionLimit int) ProcessingCode {
 	lr.lock.Lock()
 	defer lr.lock.Unlock()
 
 	switch input {
+	case KEY_UP_ARROW:
+		cmd := history.Older()
+		if len(cmd) > 0 {
+			lr.setText([]rune(cmd))
+		}
+	case KEY_DOWN_ARROW:
+		cmd := history.Newer()
+		if len(cmd) > 0 {
+			lr.setText([]rune(cmd))
+		}
 	case KEY_LEFT_ARROW:
 		lr.bufferOffset--
 		if lr.bufferOffset < 0 {
@@ -121,11 +134,15 @@ func (lr *LineReader) processInput(input string) ProcessingCode {
 	case KEY_DEL:
 		lr.deleteAtCurrentPos()
 	case KEY_TAB:
-		autoComplete := lr.completer(string(lr.buffer[:lr.bufferOffset]), string(lr.buffer[lr.bufferOffset:]))
+		autoComplete := lr.completer(string(lr.buffer[:lr.bufferOffset]), string(lr.buffer[lr.bufferOffset:]), string(lr.buffer))
 		if autoComplete != nil {
 			if len(autoComplete) == 1 {
 				ac := autoComplete[0]
 				lr.completeText([]rune(ac.Name))
+			} else if len(autoComplete) > 1 && len(autoComplete) <= completionLimit {
+				lr.displayAutocomplete(autoComplete)
+			} else if len(autoComplete) > completionLimit {
+				lr.displayTooManyAutocomplete(autoComplete)
 			}
 		}
 	case KEY_BACKSPACE:
@@ -140,6 +157,57 @@ func (lr *LineReader) processInput(input string) ProcessingCode {
 	return CodeContinue
 }
 
+// displayTooManyAutocomplete displays the too many autocomplete suggestions message
+func (lr *LineReader) displayTooManyAutocomplete(autoComplete []*AutoComplete) {
+	y, _ := getCursorPos()
+	fmt.Printf("\r\n")
+	y++
+	fmt.Printf("%d suggestions, too many to display...", len(autoComplete))
+	y++
+	fmt.Println()
+	if y > lr.winHeight {
+		y = lr.winHeight
+	}
+	lr.cursorRow = y
+	lr.renderComplete()
+}
+
+// displayAutocomplete displays the autocomplete suggestions
+func (lr *LineReader) displayAutocomplete(autoComplete []*AutoComplete) {
+	y, _ := getCursorPos()
+	fmt.Printf("\r\n")
+	y++
+	total := 0
+	for _, ac := range autoComplete {
+		text := ac.Name
+		if len(text) > 12 {
+			text = text[:12] + "..."
+		}
+		total += 18
+		if total > lr.winWidth {
+			y++
+			fmt.Printf("\r\n")
+			total = 18
+		}
+		fmt.Printf("%-20s", text)
+	}
+	y++
+	fmt.Println()
+	if y > lr.winHeight {
+		y = lr.winHeight
+	}
+	lr.cursorRow = y
+	lr.renderComplete()
+}
+
+// setText sets the current input text
+func (lr *LineReader) setText(input []rune) {
+	lr.buffer = input
+	lr.bufferOffset = len(lr.buffer)
+	lr.renderComplete()
+}
+
+// insertText inserts text at the current cursor position
 func (lr *LineReader) insertText(input []rune) {
 	runeBuffer := []rune{}
 	runeBuffer = append(runeBuffer, lr.buffer[:lr.bufferOffset]...)
@@ -154,6 +222,7 @@ func (lr *LineReader) insertText(input []rune) {
 	lr.setCursorPos()
 }
 
+// completeText performs an autocomplete operation
 func (lr *LineReader) completeText(input []rune) {
 	// hunt back to the previous either space, or beginning of the text from the current cursor position
 	inputStr := string(input)
@@ -176,6 +245,7 @@ func (lr *LineReader) completeText(input []rune) {
 	}
 }
 
+// deleteAtCurrentPos deletes a single character at the current cursor position
 func (lr *LineReader) deleteAtCurrentPos() {
 	if lr.bufferOffset < len(lr.buffer) {
 		runeBuffer := []rune{}
@@ -188,12 +258,14 @@ func (lr *LineReader) deleteAtCurrentPos() {
 	}
 }
 
+// renderFromCursor renders the input line starting from the current cursor position
 func (lr *LineReader) renderFromCursor() {
 	lr.setCursorPos()
 	fmt.Printf("%s", string(lr.buffer[lr.bufferOffset:]))
 	lr.renderEraseForward(true)
 }
 
+// renderEraseForward renders the erase forward pattern so that input does not "drag" when deletion occurs
 func (lr *LineReader) renderEraseForward(justOne bool) {
 	remainder := lr.winWidth - ((len(lr.buffer) + len(lr.prompt)) % lr.winWidth)
 	if remainder > 0 {
@@ -208,6 +280,7 @@ func (lr *LineReader) renderEraseForward(justOne bool) {
 	}
 }
 
+// renderComplete renders the complete input text regardless of the cursor position
 func (lr *LineReader) renderComplete() {
 	setCursorPos(lr.cursorRow, 1)
 	fmt.Printf("%s", string(lr.prompt))
@@ -216,6 +289,7 @@ func (lr *LineReader) renderComplete() {
 	lr.setCursorPos()
 }
 
+// resizeWindow re-renders according to the window size
 func (lr *LineReader) resizeWindow(render bool) {
 	lr.lock.Lock()
 	defer lr.lock.Unlock()
@@ -226,6 +300,7 @@ func (lr *LineReader) resizeWindow(render bool) {
 	}
 }
 
+// setCursorPos sets the current cursor position based on the linear offset in the command input
 func (lr *LineReader) setCursorPos() {
 	// Determine the linear cursor position, including the prompt
 	linearCursorPos := len(lr.prompt) + lr.bufferOffset

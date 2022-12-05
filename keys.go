@@ -10,8 +10,8 @@ const (
 	KEY_DEL         = "\x1B[3~"
 	KEY_END         = "\x1B[F"
 	KEY_HOME        = "\x1B[H"
-	KEY_LEFT_ARROW  = "\x1B[D"
-	KEY_RIGHT_ARROW = "\x1B[C"
 	KEY_UP_ARROW    = "\x1B[A"
 	KEY_DOWN_ARROW  = "\x1B[B"
+	KEY_RIGHT_ARROW = "\x1B[C"
+	KEY_LEFT_ARROW  = "\x1B[D"
 )

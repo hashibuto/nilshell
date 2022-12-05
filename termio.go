@@ -35,3 +35,8 @@ func getWindowDimensions() (int, int) {
 	winsize, _ := unix.IoctlGetWinsize(int(os.Stdout.Fd()), syscall.TIOCGWINSZ)
 	return int(winsize.Row), int(winsize.Col)
 }
+
+// clear clears the terminal
+func clear() {
+	fmt.Print("\033[H\033[2J")
+}
