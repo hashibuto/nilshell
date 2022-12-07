@@ -43,9 +43,9 @@ func NewShell(prompt string, onComplete Completer, onExecute Executor) *NilShell
 		History:           NewHistory(100),
 		AutoCompleteLimit: 20,
 		sigs:              sigs,
-		lineReader:        NewLineReader(onComplete, sigs),
 		onExecute:         onExecute,
 	}
+	ns.lineReader = NewLineReader(onComplete, sigs, ns)
 	signal.Notify(ns.sigs, syscall.SIGWINCH)
 
 	return ns
@@ -55,7 +55,7 @@ func NewShell(prompt string, onComplete Completer, onExecute Executor) *NilShell
 // provided at initialization time.  Likewise for command completion.
 func (n *NilShell) ReadUntilTerm() error {
 	for !n.isShutdown {
-		cmdString, isTerminate, err := n.lineReader.Read(n)
+		cmdString, isTerminate, err := n.lineReader.Read()
 		if err != nil {
 			return err
 		}
