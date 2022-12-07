@@ -52,10 +52,16 @@ func (h *History) Newer() string {
 		h.commandIndex++
 		if h.commandIndex >= len(h.commands) {
 			h.commandIndex = len(h.commands) - 1
+			return ""
 		}
 	}
 
 	return h.commands[h.commandIndex]
+}
+
+// Any returns true if there are any commands in the history
+func (h *History) Any() bool {
+	return len(h.commands) > 0
 }
 
 // Append appends another command to the history

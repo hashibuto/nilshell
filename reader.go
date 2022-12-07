@@ -126,13 +126,13 @@ func (lr *LineReader) processInput(input string, n *NilShell) ProcessingCode {
 		lr.isReverseSearch = true
 		lr.renderComplete()
 	case KEY_UP_ARROW:
-		cmd := n.History.Older()
-		if len(cmd) > 0 {
+		if n.History.Any() {
+			cmd := n.History.Older()
 			lr.setText([]rune(cmd))
 		}
 	case KEY_DOWN_ARROW:
-		cmd := n.History.Newer()
-		if len(cmd) > 0 {
+		if n.History.Any() {
+			cmd := n.History.Newer()
 			lr.setText([]rune(cmd))
 		}
 	case KEY_LEFT_ARROW:
