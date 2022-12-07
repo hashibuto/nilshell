@@ -5,6 +5,7 @@ const (
 	KEY_CTRL_D      = "\x04"
 	KEY_TAB         = "\x09"
 	KEY_ENTER       = "\x0D"
+	KEY_CTRL_R      = "\x12"
 	KEY_ESCAPE      = "\x1B"
 	KEY_BACKSPACE   = "\x7F"
 	KEY_DEL         = "\x1B[3~"

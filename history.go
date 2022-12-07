@@ -1,5 +1,7 @@
 package ns
 
+import "strings"
+
 type History struct {
 	commands     []string
 	commandIndex int
@@ -69,4 +71,18 @@ func (h *History) Append(command string) {
 // Export returns the command history
 func (h *History) Export() []string {
 	return h.commands
+}
+
+// FindMostRecentMatch returns the most recent command that contains subString, or an empty string
+func (h *History) FindMostRecentMatch(subString string) string {
+	if subString == "" {
+		return ""
+	}
+	for i := len(h.commands) - 1; i >= 0; i-- {
+		cmd := h.commands[i]
+		if strings.Contains(cmd, subString) {
+			return cmd
+		}
+	}
+	return ""
 }

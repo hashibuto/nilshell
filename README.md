@@ -1,5 +1,15 @@
 # nilshell
-Shell for golang which provides only the bare interface for processing a command.  NilShell is a bare implementation of what's required to build a shell/command processor.  It handles things like entering/exiting raw terminal mode and terminal resize events.  It also provides hooks for command completion as well as execution, and command history.
+Command shell for golang which provides a minimal line editor and command processing loop.  Here's what you get with NilShell:
+
+- Line editor (type, insert, delete)
+- Command history (up/down to navigate, load/export)
+- Reverse search (simple pattern match, most recent history first)
+- Tab completion hook
+- Handling of terminal resize
+
+What it doesn't do
+
+- Any sort of argument parsing / tokenization
 
 ## Usage
 
