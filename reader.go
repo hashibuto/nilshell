@@ -159,13 +159,13 @@ func (lr *LineReader) processInput(input string, n *NilShell) ProcessingCode {
 			copy(buffer, lr.lastSearchText)
 			lr.buffer = buffer
 		}
-		fmt.Println()
+		fmt.Printf("\r\n")
 		return CodeComplete
 	case KEY_CTRL_C:
-		fmt.Println()
+		fmt.Printf("\r\n")
 		return CodeCancel
 	case KEY_CTRL_D:
-		fmt.Println()
+		fmt.Printf("\r\n")
 		return CodeTerminate
 	case KEY_DEL:
 		lr.deleteAtCurrentPos()
@@ -210,7 +210,7 @@ func (lr *LineReader) displayTooManyAutocomplete(autoComplete []*AutoComplete, n
 	y++
 	fmt.Printf("%s%d suggestions, too many to display...%s", ns.AutoCompleteTooMuchStyle, len(autoComplete), CODE_RESET)
 	y++
-	fmt.Println()
+	fmt.Printf("\r\n")
 	if y > lr.winHeight {
 		y = lr.winHeight
 	}
