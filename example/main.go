@@ -8,7 +8,7 @@ import (
 
 func main() {
 	shell := ns.NewShell(
-		"» ",
+		"\033[33m » \033[0m",
 		func(beforeCursor, afterCursor string, full string) []*ns.AutoComplete {
 			if strings.HasPrefix("help", beforeCursor) {
 				return []*ns.AutoComplete{
