@@ -73,7 +73,7 @@ func (lr *LineReader) Read() (string, bool, error) {
 		if err != nil {
 			fmt.Printf("Caught panic before exiting\n%v", err)
 			if lr.nilShell.Debug {
-				fmt.Println((debug.Stack()))
+				fmt.Println(string(debug.Stack()))
 			}
 		}
 		term.Restore(fd, lr.nilShell.preState)
