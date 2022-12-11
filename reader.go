@@ -70,13 +70,13 @@ func (lr *LineReader) Read() (string, bool, error) {
 	// Try our best not to leave the terminal in raw mode
 	defer func() {
 		err := recover()
+		term.Restore(fd, lr.nilShell.preState)
 		if err != nil {
-			fmt.Printf("Caught panic before exiting\n%v", err)
+			fmt.Printf("Caught panic before exiting\n%v\n", err)
 			if lr.nilShell.Debug {
 				fmt.Println(string(debug.Stack()))
 			}
 		}
-		term.Restore(fd, lr.nilShell.preState)
 		if err != nil {
 			os.Exit(1)
 		}
