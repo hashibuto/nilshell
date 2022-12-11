@@ -24,6 +24,7 @@ type NilShell struct {
 	Prompt            string
 	History           *History
 	AutoCompleteLimit int // Maximum number of autocompletes to display
+	Debug             bool
 
 	AutoCompleteSuggestStyle string
 	AutoCompleteTooMuchStyle string
