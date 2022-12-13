@@ -176,6 +176,12 @@ func (lr *LineReader) processInput(input string, n *NilShell) ProcessingCode {
 	case KEY_CTRL_D:
 		fmt.Printf("\r\n")
 		return CodeTerminate
+	case KEY_CTRL_L:
+		clear()
+		// Tell LineReader that we are back at the first row,
+		// since it keeps track of the cursor itself.
+		lr.cursorRow = 1
+		lr.renderComplete()
 	case KEY_DEL:
 		lr.deleteAtCurrentPos()
 	case KEY_TAB:
