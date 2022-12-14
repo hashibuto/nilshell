@@ -38,6 +38,7 @@ import "github.com/hashibuto/nilshell"
 const (
     KEY_CTRL_C      = "\x03"
     KEY_CTRL_D      = "\x04"
+    KEY_CTRL_L      = "\x0C"
     KEY_TAB         = "\x09"
     KEY_ENTER       = "\x0D"
     KEY_CTRL_R      = "\x12"
