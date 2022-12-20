@@ -137,7 +137,13 @@ func (lr *LineReader) processInput(input string, n *NilShell) ProcessingCode {
 		lr.isReverseSearch = true
 		lr.renderComplete()
 	case KEY_CTRL_T:
-		lr.openInEditor()
+		if err := lr.openInEditor(); err != nil {
+			fmt.Fprintf(os.Stderr, "\r\n%s\n", err)
+			// Carriage Return (\r) to return the cursor to the left hand side (like a typewriter)
+			// Line Feed (\n) to bring us to a new line
+			// Print the error, and a final Line Feed to ensure the next prompt is up on a new line
+			return CodeCancel // Return CodeCancel to generate a new prompt.
+		}
 	case KEY_UP_ARROW:
 		if n.History.Any() {
 			cmd := n.History.Older()
@@ -412,17 +418,13 @@ func (lr *LineReader) reset() []rune {
 // openInEditor takes the contents of the LineReader buffer and stores it in a temp file, which is
 // then opened in the user's $EDITOR. After the editor is closed the contents of the file are put
 // back into the LineReader buffer.
-func (lr *LineReader) openInEditor() {
+func (lr *LineReader) openInEditor() (err error) {
 	// Create a temp file to store the buffer in.
 	tmpFile, err := os.CreateTemp("", "ns-*")
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		return
 	}
 	defer os.Remove(tmpFile.Name())
-
-	currentBuffer := lr.reset()
-	tmpFile.WriteString(string(currentBuffer))
-	tmpFile.Close()
 
 	// Get the user's editor, and open the file in it.
 	editorName := os.Getenv("EDITOR")
@@ -430,22 +432,32 @@ func (lr *LineReader) openInEditor() {
 		editorName = "vi"
 	}
 
+	// Setup the exec
 	editor := exec.Command(editorName, tmpFile.Name())
 	editor.Stdin = os.Stdin
 	editor.Stdout = os.Stdout
 	editor.Stderr = os.Stderr
-	editor.Run()
+
+	// Clear the buffer and return it.
+	currentBuffer := lr.reset()
+	tmpFile.WriteString(string(currentBuffer))
+	tmpFile.Close()
+
+	err = editor.Run() // Run the editor
+	if err != nil {
+		return
+	}
 
 	// Open that temp file again, and put its contents back into the buffer.
 	tmpFile, err = os.Open(tmpFile.Name())
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		return
 	}
 	defer tmpFile.Close()
 
 	contents, err := io.ReadAll(tmpFile)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		return
 	}
 
 	contentsAsRunes := convertAndTrim(contents)
@@ -453,6 +465,7 @@ func (lr *LineReader) openInEditor() {
 	lr.buffer = contentsAsRunes
 	lr.bufferOffset = len(contentsAsRunes)
 	lr.renderComplete()
+	return
 }
 
 // convertAndTrim returns a rune slice for a given byte slice, minus a final line feed character.
