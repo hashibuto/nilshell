@@ -11,6 +11,8 @@ What it doesn't do
 
 - Any sort of argument parsing / tokenization
 
+For a full CLI parser implementation using nilshell, check out [Artillery](https://github.com/hashibuto/artillery) 
+
 ## Usage
 
 ```
