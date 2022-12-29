@@ -42,6 +42,7 @@ const (
     KEY_TAB         = "\x09"
     KEY_ENTER       = "\x0D"
     KEY_CTRL_R      = "\x12"
+    KEY_CTRL_T      = "\x14"
     KEY_ESCAPE      = "\x1B"
     KEY_BACKSPACE   = "\x7F"
     KEY_DEL         = "\x1B[3~"
@@ -152,7 +153,7 @@ func (h *History) Older() string
 
 Older returns the next oldest command in the history
 
-## type [LineReader](<https://github.com/hashibuto/nilshell/blob/master/reader.go#L26-L40>)
+## type [LineReader](<https://github.com/hashibuto/nilshell/blob/master/reader.go#L28-L42>)
 
 ```go
 type LineReader struct {
@@ -160,7 +161,7 @@ type LineReader struct {
 }
 ```
 
-### func [NewLineReader](<https://github.com/hashibuto/nilshell/blob/master/reader.go#L45>)
+### func [NewLineReader](<https://github.com/hashibuto/nilshell/blob/master/reader.go#L47>)
 
 ```go
 func NewLineReader(completer Completer, resizeChan chan os.Signal, nilShell *NilShell) *LineReader
@@ -168,7 +169,7 @@ func NewLineReader(completer Completer, resizeChan chan os.Signal, nilShell *Nil
 
 NewLineReader creates a new LineReader object
 
-### func \(\*LineReader\) [Read](<https://github.com/hashibuto/nilshell/blob/master/reader.go#L62>)
+### func \(\*LineReader\) [Read](<https://github.com/hashibuto/nilshell/blob/master/reader.go#L64>)
 
 ```go
 func (lr *LineReader) Read() (string, bool, error)
@@ -223,7 +224,7 @@ func (n *NilShell) Shutdown()
 
 Exit instructs the shell to gracefully exit \- this can be safely invoked in an OnExecute method to implement a exit command
 
-## type [ProcessingCode](<https://github.com/hashibuto/nilshell/blob/master/reader.go#L15>)
+## type [ProcessingCode](<https://github.com/hashibuto/nilshell/blob/master/reader.go#L17>)
 
 ```go
 type ProcessingCode int8
