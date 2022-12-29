@@ -1,6 +1,7 @@
 package ns
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"strconv"
@@ -14,12 +15,20 @@ var CODE_RESET = "\033[0m"
 
 // getCursorPos returns the current cursor position (row, col).  row and col start from 1
 func getCursorPos() (int, int) {
-	b := make([]byte, 10)
+	r := bufio.NewReader(os.Stdin)
+
 	// Request the cursor position
 	fmt.Printf("\033[6n")
-	bLen, _ := os.Stdin.Read(b)
 
-	section := string(b[2 : bLen-1])
+	b, err := r.ReadString('R')
+	if err != nil {
+		panic(fmt.Sprintf("getCursorPos: %s", err.Error()))
+	}
+
+	// len(b) should be _at least_ 6, since the shortest possible valid response
+	// would be `\033[1;1R`, and `\033` (the escape char) counts as 1.
+
+	section := b[2:len(b)-1]
 	parts := strings.Split(section, ";")
 	row, _ := strconv.Atoi(parts[0])
 	col, _ := strconv.Atoi(parts[1])
