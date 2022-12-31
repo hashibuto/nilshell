@@ -289,9 +289,11 @@ func (lr *LineReader) insertText(input []rune) {
 
 	newBufferOffset := lr.bufferOffset + len(input)
 
+	hideCursor()
 	lr.renderFromCursor()
 	lr.bufferOffset = newBufferOffset
 	lr.setCursorPos()
+	showCursor()
 }
 
 // completeText performs an autocomplete operation
@@ -325,8 +327,10 @@ func (lr *LineReader) deleteAtCurrentPos() {
 		runeBuffer = append(runeBuffer, lr.buffer[lr.bufferOffset+1:]...)
 		lr.buffer = runeBuffer
 
+		hideCursor()
 		lr.renderFromCursor()
 		lr.setCursorPos()
+		showCursor()
 	}
 }
 
