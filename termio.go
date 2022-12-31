@@ -49,15 +49,15 @@ func getWindowDimensions() (int, int) {
 
 // clear clears the terminal
 func clear() {
-	fmt.Print("\033[H\033[2J")
+	os.Stdout.WriteString("\033[H\033[2J")
 }
 
 // hideCursor makes the cursor disappear
 func hideCursor() {
-	os.Stdout.WriteString(fmt.Sprintf("\x1B[?25l"))
+	os.Stdout.WriteString("\x1B[?25l")
 }
 
 // showCursor makes the cursor appear
 func showCursor() {
-	os.Stdout.WriteString(fmt.Sprintf("\x1B[?25h"))
+	os.Stdout.WriteString("\x1B[?25h")
 }
