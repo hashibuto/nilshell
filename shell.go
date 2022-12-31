@@ -1,6 +1,7 @@
 package ns
 
 import (
+	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
@@ -67,6 +68,7 @@ func (n *NilShell) ReadUntilTerm() error {
 
 		if len(cmdString) > 0 {
 			n.History.Append(cmdString)
+			fmt.Printf("\r")
 			n.onExecute(n, cmdString)
 		}
 	}

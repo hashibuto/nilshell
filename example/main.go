@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 
 	ns "github.com/hashibuto/nilshell"
@@ -21,7 +22,7 @@ func main() {
 			return nil
 		},
 		func(ns *ns.NilShell, cmd string) {
-
+			fmt.Println("Executed a command")
 		},
 	)
 	shell.ReadUntilTerm()
