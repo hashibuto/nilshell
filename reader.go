@@ -41,7 +41,7 @@ type LineReader struct {
 	cursorRow       int
 }
 
-var reverseSearchPrompt = "(reverse search: `"
+var reverseSearchPrompt = "(reverse-i- search: `"
 
 // NewLineReader creates a new LineReader object
 func NewLineReader(completer Completer, resizeChan chan os.Signal, nilShell *NilShell) *LineReader {
@@ -85,13 +85,14 @@ func (lr *LineReader) Read() (string, bool, error) {
 	}()
 
 	cursorRow, _ := getCursorPos()
+	hideCursor()
 	setCursorPos(cursorRow, 1)
 	lr.cursorRow = cursorRow
 	lr.bufferOffset = 0
 	lr.buffer = []rune{}
 	fmt.Printf("%s", lr.nilShell.Prompt)
-
 	lr.promptLength = len([]rune(EscapeFinder.ReplaceAllString(lr.nilShell.Prompt, "")))
+	showCursor()
 
 	iBuf := make([]byte, 20)
 	for {
@@ -178,10 +179,10 @@ func (lr *LineReader) processInput(input string, n *NilShell) ProcessingCode {
 			copy(buffer, lr.lastSearchText)
 			lr.buffer = buffer
 		}
-		fmt.Printf("\r\n")
+		fmt.Printf("\n")
 		return CodeComplete
 	case KEY_CTRL_C:
-		fmt.Printf("\r\n")
+		fmt.Printf("\n")
 		return CodeCancel
 	case KEY_CTRL_D:
 		fmt.Printf("\r\n")
@@ -288,9 +289,11 @@ func (lr *LineReader) insertText(input []rune) {
 
 	newBufferOffset := lr.bufferOffset + len(input)
 
+	hideCursor()
 	lr.renderFromCursor()
 	lr.bufferOffset = newBufferOffset
 	lr.setCursorPos()
+	showCursor()
 }
 
 // completeText performs an autocomplete operation
@@ -324,8 +327,10 @@ func (lr *LineReader) deleteAtCurrentPos() {
 		runeBuffer = append(runeBuffer, lr.buffer[lr.bufferOffset+1:]...)
 		lr.buffer = runeBuffer
 
+		hideCursor()
 		lr.renderFromCursor()
 		lr.setCursorPos()
+		showCursor()
 	}
 }
 
@@ -363,6 +368,7 @@ func (lr *LineReader) renderEraseForward(justOne bool) {
 
 // renderComplete renders the complete input text regardless of the cursor position
 func (lr *LineReader) renderComplete() {
+	hideCursor()
 	if lr.isReverseSearch {
 		lr.lastSearchText = []rune(lr.nilShell.History.FindMostRecentMatch(string(lr.buffer)))
 		setCursorPos(lr.cursorRow, 1)
@@ -376,6 +382,7 @@ func (lr *LineReader) renderComplete() {
 		lr.renderEraseForward(false)
 		lr.setCursorPos()
 	}
+	showCursor()
 }
 
 // resizeWindow re-renders according to the window size
