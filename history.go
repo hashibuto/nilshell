@@ -92,7 +92,7 @@ func (h *History) FindMostRecentMatch(subString string) string {
 	}
 	for i := len(h.commands) - 1; i >= 0; i-- {
 		cmd := h.commands[i]
-		if strings.Contains(cmd, subString) {
+		if strings.Contains(strings.ToLower(cmd), strings.ToLower(subString)) {
 			return cmd
 		}
 	}
