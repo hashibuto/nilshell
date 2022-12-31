@@ -28,7 +28,7 @@ func getCursorPos() (int, int) {
 	// len(b) should be _at least_ 6, since the shortest possible valid response
 	// would be `\033[1;1R`, and `\033` (the escape char) counts as 1.
 
-	section := b[2:len(b)-1]
+	section := b[2 : len(b)-1]
 	parts := strings.Split(section, ";")
 	row, _ := strconv.Atoi(parts[0])
 	col, _ := strconv.Atoi(parts[1])
@@ -50,4 +50,14 @@ func getWindowDimensions() (int, int) {
 // clear clears the terminal
 func clear() {
 	fmt.Print("\033[H\033[2J")
+}
+
+// hideCursor makes the cursor disappear
+func hideCursor() {
+	os.Stdout.WriteString(fmt.Sprintf("\x1B[?25l"))
+}
+
+// showCursor makes the cursor appear
+func showCursor() {
+	os.Stdout.WriteString(fmt.Sprintf("\x1B[?25h"))
 }
