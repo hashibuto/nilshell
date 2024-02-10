@@ -66,6 +66,7 @@ func (h *History) Any() bool {
 
 // Append appends another command to the history
 func (h *History) Append(command string) {
+	h.commandIndex = -1
 	if len(h.commands) > 0 {
 		// Don't append consecutive duplicates (this isn't an audit history, its a convenience history)
 		if h.commands[len(h.commands)-1] == command {
@@ -76,8 +77,6 @@ func (h *History) Append(command string) {
 	if len(h.commands) > h.maxKeep {
 		h.commands = h.commands[len(h.commands)-h.maxKeep:]
 	}
-
-	h.commandIndex = -1
 }
 
 // Export returns the command history
