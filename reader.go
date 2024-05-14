@@ -156,15 +156,13 @@ func (lr *LineReader) processInput(input string, n *NilShell) ProcessingCode {
 			lr.setText([]rune(cmd))
 		}
 	case KEY_LEFT_ARROW:
-		lr.bufferOffset--
-		if lr.bufferOffset < 0 {
-			lr.bufferOffset = 0
+		if lr.bufferOffset > 0 {
+			lr.bufferOffset--
 		}
 		lr.setCursorPos()
 	case KEY_RIGHT_ARROW:
-		lr.bufferOffset++
-		if lr.bufferOffset > len(lr.buffer) {
-			lr.bufferOffset = len(lr.buffer)
+		if lr.bufferOffset < len(lr.buffer) {
+			lr.bufferOffset++
 		}
 		lr.setCursorPos()
 	case KEY_HOME:
@@ -408,6 +406,11 @@ func (lr *LineReader) setCursorPos() {
 	linearCursorPos := promptOffset + lr.bufferOffset
 	curCursorRow := lr.cursorRow + int(linearCursorPos/lr.winWidth)
 	curCursorCol := (linearCursorPos % lr.winWidth) + 1
+	// deal with the end of terminal (vertical situation)
+	if curCursorRow > lr.winHeight {
+		lr.cursorRow -= (curCursorRow - lr.winHeight)
+		curCursorRow = lr.winHeight
+	}
 	setCursorPos(curCursorRow, curCursorCol)
 }
 
