@@ -10,7 +10,8 @@ import (
 )
 
 type AutoComplete struct {
-	Name string
+	Value   string
+	Display string
 }
 
 // Completer receives a string of everything before the cursor, after the cursor, and the entire command string.  It

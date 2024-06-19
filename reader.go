@@ -207,7 +207,7 @@ func (lr *LineReader) processInput(input string, n *NilShell) ProcessingCode {
 			if autoComplete != nil {
 				if len(autoComplete) == 1 {
 					ac := autoComplete[0]
-					lr.completeText([]rune(ac.Name))
+					lr.completeText([]rune(ac.Value))
 				} else if len(autoComplete) > 1 && len(autoComplete) <= n.AutoCompleteLimit {
 					lr.displayAutocomplete(autoComplete, n)
 				} else if len(autoComplete) > n.AutoCompleteLimit {
@@ -244,25 +244,44 @@ func (lr *LineReader) displayTooManyAutocomplete(autoComplete []*AutoComplete, n
 
 // displayAutocomplete displays the autocomplete suggestions
 func (lr *LineReader) displayAutocomplete(autoComplete []*AutoComplete, ns *NilShell) {
+	colMaxWidth := int(lr.winWidth / 3)
+	colActualWidth := 0
+
+	// determine how many columns we can pack into a row, with a minimum of 3
+	for _, ac := range autoComplete {
+		if len(ac.Display) > colActualWidth {
+			tempActualWidth := len(ac.Display)
+			if tempActualWidth >= colMaxWidth {
+				colActualWidth = colMaxWidth
+				break
+			} else {
+				colActualWidth = tempActualWidth
+			}
+		}
+	}
+
 	y, _ := getCursorPos()
 	fmt.Printf("\r\n%s", ns.AutoCompleteSuggestStyle)
 	y++
-	total := 0
-	for _, ac := range autoComplete {
-		text := ac.Name
-		if len(text) > 12 {
-			text = text[:12] + "..."
-		}
-		total += 18
-		if total > lr.winWidth {
-			y++
-			fmt.Printf("\r\n")
-			total = 18
-		}
-		fmt.Printf("%-20s", text)
+	numCols := int(lr.winWidth / colActualWidth)
+	if numCols > 3 {
+		numCols--
 	}
-	y++
-	fmt.Printf("%s\n\r", CODE_RESET)
+	colActualWidth = int(lr.winWidth / numCols)
+	var colNum int
+	for i, ac := range autoComplete {
+		fmt.Printf("%s", PadRight(ac.Display, colActualWidth, 2))
+		colNum = i % numCols
+		if colNum == numCols-1 {
+			// End of line
+			y++
+			fmt.Print("\r\n")
+		}
+	}
+	if colNum != numCols-1 {
+		y++
+		fmt.Printf("%s\n\r", CODE_RESET)
+	}
 	if y > lr.winHeight {
 		y = lr.winHeight
 	}
