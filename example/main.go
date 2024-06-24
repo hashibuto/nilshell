@@ -20,6 +20,34 @@ var ac []*ns.AutoComplete = []*ns.AutoComplete{
 		Value:   "helping",
 		Display: "helping (-g / --helper)  helping of fiber a day",
 	},
+	{
+		Value:   "dog",
+		Display: "dog",
+	},
+	{
+		Value:   "doggy",
+		Display: "doggy",
+	},
+	{
+		Value:   "doggo",
+		Display: "doggo",
+	},
+	{
+		Value:   "big1",
+		Display: "big column is a big column, let's see how much we can fit into it to make it work",
+	},
+	{
+		Value:   "big2",
+		Display: "big column is a big column, let's see how much we can fit into it to make it work",
+	},
+	{
+		Value:   "big3",
+		Display: "big column is a big column, let's see how much we can fit into it to make it work",
+	},
+	{
+		Value:   "big4",
+		Display: "big column is a big column, let's see how much we can fit into it to make it work",
+	},
 }
 
 func main() {

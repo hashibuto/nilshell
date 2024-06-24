@@ -7,8 +7,8 @@ import (
 	"os/exec"
 	"regexp"
 	"runtime/debug"
+	"strconv"
 	"strings"
-	"sync"
 	"syscall"
 
 	"golang.org/x/term"
@@ -29,16 +29,15 @@ type LineReader struct {
 	lastSearchText  []rune
 	nilShell        *NilShell
 	isReverseSearch bool
-	prompt          string
 	promptLength    int
 	completer       Completer
 	bufferOffset    int
 	resizeChan      chan os.Signal
 	buffer          []rune
-	lock            *sync.Mutex
 	winWidth        int
 	winHeight       int
 	cursorRow       int
+	resizeComplete  chan struct{}
 }
 
 var reverseSearchPrompt = "(reverse-i- search: `"
@@ -46,15 +45,15 @@ var reverseSearchPrompt = "(reverse-i- search: `"
 // NewLineReader creates a new LineReader object
 func NewLineReader(completer Completer, resizeChan chan os.Signal, nilShell *NilShell) *LineReader {
 	lr := &LineReader{
-		completer:  completer,
-		resizeChan: resizeChan,
-		buffer:     []rune{},
-		lock:       &sync.Mutex{},
-		nilShell:   nilShell,
+		completer:      completer,
+		resizeChan:     resizeChan,
+		buffer:         []rune{},
+		nilShell:       nilShell,
+		resizeComplete: make(chan struct{}, 1),
 	}
 
+	lr.winHeight, lr.winWidth = getWindowDimensions()
 	go lr.resizeWatcher()
-	lr.resizeWindow(false)
 
 	return lr
 }
@@ -100,6 +99,7 @@ func (lr *LineReader) Read() (string, bool, error) {
 		if err != nil {
 			return "", false, err
 		}
+
 		iString := string(iBuf[:n])
 		code := lr.processInput(iString, lr.nilShell)
 		switch code {
@@ -130,9 +130,6 @@ func (lr *LineReader) resizeWatcher() {
 
 // processInput executes one iteration of input processing which would occur in the interactive read loop
 func (lr *LineReader) processInput(input string, n *NilShell) ProcessingCode {
-	lr.lock.Lock()
-	defer lr.lock.Unlock()
-
 	switch input {
 	case KEY_CTRL_R:
 		lr.isReverseSearch = true
@@ -221,10 +218,25 @@ func (lr *LineReader) processInput(input string, n *NilShell) ProcessingCode {
 			lr.deleteAtCurrentPos()
 		}
 	default:
-		lr.insertText([]rune(input))
+		if strings.Contains(input, ";") && strings.HasSuffix(input, "R") {
+			// this got triggered by a window resize and subsequent request for the new cursor position
+			lr.cursorRow, _ = extractCursorPos(input)
+			lr.winHeight, lr.winWidth = getWindowDimensions()
+		} else {
+			lr.insertText([]rune(input))
+		}
 	}
 
 	return CodeContinue
+}
+
+func extractCursorPos(input string) (int, int) {
+	section := input[2 : len(input)-1]
+	parts := strings.Split(section, ";")
+	row, _ := strconv.Atoi(parts[0])
+	col, _ := strconv.Atoi(parts[1])
+
+	return row, col
 }
 
 // displayTooManyAutocomplete displays the too many autocomplete suggestions message
@@ -244,33 +256,19 @@ func (lr *LineReader) displayTooManyAutocomplete(autoComplete []*AutoComplete, n
 
 // displayAutocomplete displays the autocomplete suggestions
 func (lr *LineReader) displayAutocomplete(autoComplete []*AutoComplete, ns *NilShell) {
-	colMaxWidth := int(lr.winWidth / 3)
-	colActualWidth := 0
-
-	// determine how many columns we can pack into a row, with a minimum of 3
-	for _, ac := range autoComplete {
-		if len(ac.Display) > colActualWidth {
-			tempActualWidth := len(ac.Display)
-			if tempActualWidth >= colMaxWidth {
-				colActualWidth = colMaxWidth
-				break
-			} else {
-				colActualWidth = tempActualWidth
-			}
-		}
+	disp := make([]string, len(autoComplete))
+	for i, ac := range autoComplete {
+		disp[i] = ac.Display
 	}
 
 	y, _ := getCursorPos()
 	fmt.Printf("\r\n%s", ns.AutoCompleteSuggestStyle)
 	y++
-	numCols := int(lr.winWidth / colActualWidth)
-	if numCols > 3 {
-		numCols--
-	}
-	colActualWidth = int(lr.winWidth / numCols)
+
 	var colNum int
+	colWidth, numCols := CalculateColumnWidth(disp, ns.lineReader.winWidth, 2, 2)
 	for i, ac := range autoComplete {
-		fmt.Printf("%s", PadRight(ac.Display, colActualWidth, 2))
+		fmt.Printf("%s", PadRight(ac.Display, colWidth, 2))
 		colNum = i % numCols
 		if colNum == numCols-1 {
 			// End of line
@@ -389,11 +387,13 @@ func (lr *LineReader) renderComplete() {
 	if lr.isReverseSearch {
 		lr.lastSearchText = []rune(lr.nilShell.History.FindMostRecentMatch(string(lr.buffer)))
 		setCursorPos(lr.cursorRow, 1)
+
 		fmt.Printf("%s%s`): %s", reverseSearchPrompt, string(lr.buffer), string(lr.lastSearchText))
 		lr.renderEraseForward(false)
 		lr.setCursorPos()
 	} else {
 		setCursorPos(lr.cursorRow, 1)
+
 		fmt.Printf("%s", lr.nilShell.Prompt)
 		fmt.Printf("%s", string(lr.buffer))
 		lr.renderEraseForward(false)
@@ -404,13 +404,7 @@ func (lr *LineReader) renderComplete() {
 
 // resizeWindow re-renders according to the window size
 func (lr *LineReader) resizeWindow(render bool) {
-	lr.lock.Lock()
-	defer lr.lock.Unlock()
-
-	lr.winHeight, lr.winWidth = getWindowDimensions()
-	if render {
-		lr.renderComplete()
-	}
+	requestCursorPos()
 }
 
 // setCursorPos sets the current cursor position based on the linear offset in the command input

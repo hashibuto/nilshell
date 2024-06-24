@@ -47,6 +47,7 @@ func NewShell(prompt string, onComplete Completer, onExecute Executor) *NilShell
 		AutoCompleteLimit: 20,
 		sigs:              sigs,
 		onExecute:         onExecute,
+		Debug:             true,
 	}
 	ns.lineReader = NewLineReader(onComplete, sigs, ns)
 	signal.Notify(ns.sigs, syscall.SIGWINCH)
