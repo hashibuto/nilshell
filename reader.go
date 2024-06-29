@@ -354,8 +354,25 @@ func (lr *LineReader) renderFromCursor() {
 	if lr.isReverseSearch {
 		lr.renderComplete()
 	} else {
-		lr.setCursorPos()
-		fmt.Printf("%s", string(lr.buffer[lr.bufferOffset:]))
+		newLines := 0
+		row, col := lr.setCursorPos()
+		bufferOffset := lr.bufferOffset
+		for len(lr.buffer) > bufferOffset {
+			remaining := len(lr.buffer) - bufferOffset
+			rowLen := (lr.winWidth - col) + 1
+			if rowLen > remaining {
+				rowLen = remaining
+			} else {
+				if row >= lr.winHeight {
+					newLines++
+				}
+			}
+
+			fmt.Printf("%s", string(lr.buffer[bufferOffset:bufferOffset+rowLen]))
+			bufferOffset += rowLen
+			col = 1
+		}
+		lr.cursorRow -= newLines
 		lr.renderEraseForward(true)
 	}
 }
@@ -408,7 +425,7 @@ func (lr *LineReader) resizeWindow(render bool) {
 }
 
 // setCursorPos sets the current cursor position based on the linear offset in the command input
-func (lr *LineReader) setCursorPos() {
+func (lr *LineReader) setCursorPos() (int, int) {
 	// Determine the linear cursor position, including the prompt
 	var promptOffset int
 	if lr.isReverseSearch {
@@ -419,12 +436,15 @@ func (lr *LineReader) setCursorPos() {
 	linearCursorPos := promptOffset + lr.bufferOffset
 	curCursorRow := lr.cursorRow + int(linearCursorPos/lr.winWidth)
 	curCursorCol := (linearCursorPos % lr.winWidth) + 1
-	// deal with the end of terminal (vertical situation)
+
+	// if we're editing on the final row, move back
 	if curCursorRow > lr.winHeight {
 		lr.cursorRow -= (curCursorRow - lr.winHeight)
 		curCursorRow = lr.winHeight
 	}
 	setCursorPos(curCursorRow, curCursorCol)
+
+	return curCursorRow, curCursorCol
 }
 
 // Reset the LineReader buffer and return its contents.
