@@ -13,6 +13,10 @@ import (
 
 var CODE_RESET = "\033[0m"
 
+func requestCursorPos() {
+	fmt.Printf("\033[6n")
+}
+
 // getCursorPos returns the current cursor position (row, col).  row and col start from 1
 func getCursorPos() (int, int) {
 	r := bufio.NewReader(os.Stdin)
