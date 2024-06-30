@@ -11,10 +11,10 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-var CODE_RESET = "\033[0m"
+var CODE_RESET = "\x1b[0m"
 
 func requestCursorPos() {
-	fmt.Printf("\033[6n")
+	fmt.Printf("\x1b[6n")
 }
 
 // getCursorPos returns the current cursor position (row, col).  row and col start from 1
@@ -22,7 +22,7 @@ func getCursorPos() (int, int) {
 	r := bufio.NewReader(os.Stdin)
 
 	// Request the cursor position
-	fmt.Printf("\033[6n")
+	fmt.Printf("\x1b[6n")
 
 	b, err := r.ReadString('R')
 	if err != nil {
@@ -42,7 +42,7 @@ func getCursorPos() (int, int) {
 
 // setCursorPos sets the current cursor position.  row and col start from 1
 func setCursorPos(row int, col int) {
-	os.Stdout.WriteString(fmt.Sprintf("\x1B[%d;%dH", row, col))
+	os.Stdout.WriteString(fmt.Sprintf("\x1b[%d;%dH", row, col))
 }
 
 // getWindowDimensions returns the size of the window (row, col)
@@ -53,15 +53,15 @@ func getWindowDimensions() (int, int) {
 
 // clear clears the terminal
 func clear() {
-	os.Stdout.WriteString("\033[H\033[2J")
+	os.Stdout.WriteString("\x1b[H\x1b[2J")
 }
 
 // hideCursor makes the cursor disappear
 func hideCursor() {
-	os.Stdout.WriteString("\x1B[?25l")
+	os.Stdout.WriteString("\x1b[?25l")
 }
 
 // showCursor makes the cursor appear
 func showCursor() {
-	os.Stdout.WriteString("\x1B[?25h")
+	os.Stdout.WriteString("\x1b[?25h")
 }
