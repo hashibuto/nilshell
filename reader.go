@@ -11,6 +11,7 @@ import (
 	"strings"
 	"syscall"
 
+	tm "github.com/hashibuto/nilshell/pkg/term"
 	"golang.org/x/term"
 )
 
@@ -268,7 +269,7 @@ func (lr *LineReader) displayAutocomplete(autoComplete []*AutoComplete, ns *NilS
 	var colNum int
 	colWidth, numCols := CalculateColumnWidth(disp, ns.lineReader.winWidth, 2, 2)
 	for i, ac := range autoComplete {
-		fmt.Printf("%s", PadRight(ac.Display, colWidth, 2))
+		fmt.Printf("%s", tm.PadRight(ac.Display, colWidth, 2))
 		colNum = i % numCols
 		if colNum == numCols-1 {
 			// End of line
