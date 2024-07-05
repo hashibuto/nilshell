@@ -68,3 +68,10 @@ func TestPaddingRightGuttersRune(t *testing.T) {
 	assert.True(t, strings.HasPrefix(x, "hello"))
 	assert.True(t, utf8.RuneCountInString(x) == 7)
 }
+
+func TestRemoveEscapeSequences(t *testing.T) {
+	src := []byte("\x1b[31mhello\x1b[0m")
+	stripped := StripTerminalEscapeSequences(src)
+	strippedString := string(stripped)
+	assert.Equal(t, "hello", strippedString)
+}
