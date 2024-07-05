@@ -1,6 +1,11 @@
 package term
 
-import "strings"
+import (
+	"regexp"
+	"strings"
+)
+
+var escapeFinder = regexp.MustCompile("\x1b\\[[^a-zA-Z]+[a-zA-Z]")
 
 // Measure returns the number of horizonal space the provided text accounts for.  This will filter out escape characters, and treat multi-byte
 // unicode characters as single space tenants.
@@ -76,4 +81,9 @@ func PadRight(text string, maxLength int, gutter int) string {
 	croppedText, croppedLen := Crop(text, maxLength-gutter)
 
 	return croppedText + strings.Repeat(" ", maxLength-croppedLen)
+}
+
+// StripTerminalEscapeSequences removes all terminal escape sequences from the provided string, and returns the remaining string
+func StripTerminalEscapeSequences(data []byte) []byte {
+	return escapeFinder.ReplaceAll(data, []byte{})
 }
