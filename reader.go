@@ -17,7 +17,7 @@ import (
 
 type ProcessingCode int8
 
-var EscapeFinder = regexp.MustCompile("\033\\[[^m]+m")
+var EscapeFinder = regexp.MustCompile("\x1b\\[[^a-zA-Z]+[a-zA-Z]")
 
 const (
 	CodeContinue ProcessingCode = iota
