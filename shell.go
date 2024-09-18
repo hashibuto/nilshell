@@ -1,10 +1,13 @@
 package ns
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
+	"time"
 
 	"golang.org/x/term"
 )
@@ -27,6 +30,7 @@ type NilShell struct {
 	History           *History
 	AutoCompleteLimit int // Maximum number of autocompletes to display
 	Debug             bool
+	DumpFile          string
 
 	AutoCompleteSuggestStyle string
 	AutoCompleteTooMuchStyle string
@@ -36,6 +40,8 @@ type NilShell struct {
 	lineReader *LineReader
 	onExecute  Executor
 	isShutdown bool
+	dumpChan   chan []byte
+	wg         sync.WaitGroup
 }
 
 // NewShell constructs a NilShell
@@ -48,6 +54,7 @@ func NewShell(prompt string, onComplete Completer, onExecute Executor) *NilShell
 		sigs:              sigs,
 		onExecute:         onExecute,
 		Debug:             true,
+		dumpChan:          make(chan []byte, 3000),
 	}
 	ns.lineReader = NewLineReader(onComplete, sigs, ns)
 	signal.Notify(ns.sigs, syscall.SIGWINCH)
@@ -58,6 +65,49 @@ func NewShell(prompt string, onComplete Completer, onExecute Executor) *NilShell
 // ReadUntilTerm blocks, receiving commands until the user requests termination.  Commands are processed via the executor callback
 // provided at initialization time.  Likewise for command completion.
 func (n *NilShell) ReadUntilTerm() error {
+	if n.DumpFile != "" {
+		n.wg.Add(1)
+		n.lineReader.DumpChan = n.dumpChan
+
+		ofile, err := os.OpenFile(n.DumpFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+		if err != nil {
+			return err
+		}
+		defer ofile.Close()
+
+		go func() {
+			defer n.wg.Done()
+
+			t := time.NewTicker(time.Second)
+			var buffer bytes.Buffer
+			for {
+				select {
+				case bArray := <-n.dumpChan:
+					if bArray == nil {
+						t.Stop()
+						if buffer.Len() > 0 {
+							ofile.Write(buffer.Bytes())
+						}
+						return
+					}
+
+					for _, b := range bArray {
+						if b > 32 && b < 127 {
+							buffer.WriteString(fmt.Sprintf("%c", b))
+						} else {
+							buffer.WriteString(fmt.Sprintf("<%0X>", b))
+						}
+					}
+					buffer.WriteString("\n")
+				case <-t.C:
+					if buffer.Len() > 0 {
+						ofile.Write(buffer.Bytes())
+					}
+				}
+			}
+		}()
+	}
+
 	for !n.isShutdown {
 		cmdString, isTerminate, err := n.lineReader.Read()
 		if err != nil {
@@ -74,6 +124,8 @@ func (n *NilShell) ReadUntilTerm() error {
 			n.onExecute(n, cmdString)
 		}
 	}
+	close(n.dumpChan)
+	n.wg.Wait()
 
 	return nil
 }
