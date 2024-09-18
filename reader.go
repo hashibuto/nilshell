@@ -27,6 +27,7 @@ const (
 )
 
 type LineReader struct {
+	DumpChan        chan []byte
 	lastSearchText  []rune
 	nilShell        *NilShell
 	isReverseSearch bool
@@ -99,6 +100,9 @@ func (lr *LineReader) Read() (string, bool, error) {
 		n, err := os.Stdin.Read(iBuf)
 		if err != nil {
 			return "", false, err
+		}
+		if lr.DumpChan != nil {
+			lr.DumpChan <- iBuf[:n]
 		}
 
 		iString := string(iBuf[:n])
