@@ -69,7 +69,7 @@ func (n *NilShell) ReadUntilTerm() error {
 		n.wg.Add(1)
 		n.lineReader.DumpChan = n.dumpChan
 
-		ofile, err := os.OpenFile(n.DumpFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+		ofile, err := os.OpenFile(n.DumpFile, os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil {
 			return err
 		}
@@ -87,6 +87,7 @@ func (n *NilShell) ReadUntilTerm() error {
 						t.Stop()
 						if buffer.Len() > 0 {
 							ofile.Write(buffer.Bytes())
+							buffer.Reset()
 						}
 						return
 					}
@@ -95,13 +96,14 @@ func (n *NilShell) ReadUntilTerm() error {
 						if b > 32 && b < 127 {
 							buffer.WriteString(fmt.Sprintf("%c", b))
 						} else {
-							buffer.WriteString(fmt.Sprintf("<%0X>", b))
+							buffer.WriteString(fmt.Sprintf("<0x%02X>", b))
 						}
 					}
 					buffer.WriteString("\n")
 				case <-t.C:
 					if buffer.Len() > 0 {
 						ofile.Write(buffer.Bytes())
+						buffer.Reset()
 					}
 				}
 			}
