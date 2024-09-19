@@ -69,7 +69,7 @@ func (n *NilShell) ReadUntilTerm() error {
 		n.wg.Add(1)
 		n.lineReader.DumpChan = n.dumpChan
 
-		ofile, err := os.OpenFile(n.DumpFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+		ofile, err := os.OpenFile(n.DumpFile, os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil {
 			return err
 		}
