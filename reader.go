@@ -65,6 +65,7 @@ func NewLineReader(completer Completer, resizeChan chan os.Signal, nilShell *Nil
 // Read will read a single command from the command line and can be interrupted by pressing <enter>, <ctrl+c>, or <ctrl+d>.
 // Read responds to changes in the terminal window size.
 func (lr *LineReader) Read() (string, bool, error) {
+	stillRaw := lr.isRaw
 	if !lr.isRaw {
 		lr.savedFd = int(os.Stdin.Fd())
 		preState, err := term.MakeRaw(lr.savedFd)
@@ -95,15 +96,17 @@ func (lr *LineReader) Read() (string, bool, error) {
 		}
 	}()
 
-	cursorRow, _ := getCursorPos()
-	hideCursor()
-	setCursorPos(cursorRow, 1)
-	lr.cursorRow = cursorRow
+	if !stillRaw {
+		cursorRow, _ := getCursorPos()
+		setCursorPos(cursorRow, 1)
+		lr.cursorRow = cursorRow
+	} else {
+		fmt.Printf("\r")
+	}
 	lr.bufferOffset = 0
 	lr.buffer = []rune{}
 	fmt.Printf("%s", lr.nilShell.Prompt)
 	lr.promptLength = len([]rune(EscapeFinder.ReplaceAllString(lr.nilShell.Prompt, "")))
-	showCursor()
 
 	iBuf := make([]byte, 20)
 	for {
@@ -123,8 +126,10 @@ func (lr *LineReader) Read() (string, bool, error) {
 				unRaw = false
 			}
 			lr.isReverseSearch = false
+			lr.cursorRow++
 			return string(lr.buffer), false, nil
 		case CodeCancel:
+			lr.cursorRow++
 			return "", false, nil
 		case CodeTerminate:
 			lr.resizeChan <- syscall.SIGTERM
