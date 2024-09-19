@@ -22,7 +22,7 @@ func getCursorPos() (int, int) {
 	r := bufio.NewReader(os.Stdin)
 
 	// Request the cursor position
-	fmt.Printf("\x1b[6n")
+	requestCursorPos()
 
 	b, err := r.ReadString('R')
 	if err != nil {

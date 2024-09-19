@@ -238,6 +238,9 @@ func (lr *LineReader) processInput(input string, n *NilShell) ProcessingCode {
 func extractCursorPos(input string) (int, int) {
 	section := input[2 : len(input)-1]
 	parts := strings.Split(section, ";")
+	if len(parts) < 2 {
+		panic(fmt.Errorf("cursor position response too short: %s", []byte(input)))
+	}
 	row, _ := strconv.Atoi(parts[0])
 	col, _ := strconv.Atoi(parts[1])
 
@@ -426,6 +429,9 @@ func (lr *LineReader) renderComplete() {
 
 // resizeWindow re-renders according to the window size
 func (lr *LineReader) resizeWindow(render bool) {
+	if lr.DumpChan != nil {
+		lr.DumpChan <- []byte(fmt.Sprintf("<RESIZE_WINDOW>"))
+	}
 	requestCursorPos()
 }
 
@@ -447,6 +453,9 @@ func (lr *LineReader) setCursorPos() (int, int) {
 		lr.cursorRow -= (curCursorRow - lr.winHeight)
 		curCursorRow = lr.winHeight
 	}
+	if lr.DumpChan != nil {
+		lr.DumpChan <- []byte(fmt.Sprintf("<SET_CURSOR row:%d col:%d>", curCursorRow, curCursorCol))
+	}
 	setCursorPos(curCursorRow, curCursorCol)
 
 	return curCursorRow, curCursorCol
@@ -454,6 +463,10 @@ func (lr *LineReader) setCursorPos() (int, int) {
 
 // Reset the LineReader buffer and return its contents.
 func (lr *LineReader) reset() []rune {
+	if lr.DumpChan != nil {
+		lr.DumpChan <- []byte(fmt.Sprintf("<RESET>"))
+	}
+
 	ret := make([]rune, len(lr.buffer))
 	copy(ret, lr.buffer)
 
