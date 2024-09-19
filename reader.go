@@ -40,6 +40,8 @@ type LineReader struct {
 	winHeight       int
 	cursorRow       int
 	resizeComplete  chan struct{}
+	isRaw           bool
+	savedFd         int
 }
 
 var reverseSearchPrompt = "(reverse-i- search: `"
@@ -63,17 +65,25 @@ func NewLineReader(completer Completer, resizeChan chan os.Signal, nilShell *Nil
 // Read will read a single command from the command line and can be interrupted by pressing <enter>, <ctrl+c>, or <ctrl+d>.
 // Read responds to changes in the terminal window size.
 func (lr *LineReader) Read() (string, bool, error) {
-	fd := int(os.Stdin.Fd())
-	preState, err := term.MakeRaw(fd)
-	if err != nil {
-		return "", false, err
+	if !lr.isRaw {
+		lr.savedFd = int(os.Stdin.Fd())
+		preState, err := term.MakeRaw(lr.savedFd)
+		if err != nil {
+			return "", false, err
+		}
+		lr.isRaw = true
+		lr.nilShell.preState = preState
 	}
-	lr.nilShell.preState = preState
+	unRaw := true
 
 	// Try our best not to leave the terminal in raw mode
 	defer func() {
+		if !unRaw {
+			return
+		}
+		lr.isRaw = false
 		err := recover()
-		term.Restore(fd, lr.nilShell.preState)
+		term.Restore(lr.savedFd, lr.nilShell.preState)
 		if err != nil {
 			fmt.Printf("Caught panic before exiting\n%v\n", err)
 			if lr.nilShell.Debug {
@@ -109,6 +119,9 @@ func (lr *LineReader) Read() (string, bool, error) {
 		code := lr.processInput(iString, lr.nilShell)
 		switch code {
 		case CodeComplete:
+			if len(lr.buffer) == 0 {
+				unRaw = false
+			}
 			lr.isReverseSearch = false
 			return string(lr.buffer), false, nil
 		case CodeCancel:
