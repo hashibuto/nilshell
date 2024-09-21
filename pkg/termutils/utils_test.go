@@ -1,9 +1,8 @@
-package term
+package termutils
 
 import (
 	"strings"
 	"testing"
-	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -66,7 +65,7 @@ func TestPaddingRightGutters2(t *testing.T) {
 func TestPaddingRightGuttersRune(t *testing.T) {
 	x := PadRight("hello\x1b[0m", 7, 2)
 	assert.True(t, strings.HasPrefix(x, "hello"))
-	assert.True(t, utf8.RuneCountInString(x) == 7)
+	assert.Equal(t, Measure(x), 7)
 }
 
 func TestRemoveEscapeSequences(t *testing.T) {
@@ -74,4 +73,12 @@ func TestRemoveEscapeSequences(t *testing.T) {
 	stripped := StripTerminalEscapeSequences(src)
 	strippedString := string(stripped)
 	assert.Equal(t, "hello", strippedString)
+}
+
+func TestGetCursorPosition(t *testing.T) {
+	value := "\x1b[13;11R"
+	row, col, err := GetCursorPosition(value)
+	assert.NoError(t, err)
+	assert.Equal(t, 13, row)
+	assert.Equal(t, 11, col)
 }

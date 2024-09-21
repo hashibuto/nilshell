@@ -6,9 +6,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"syscall"
-
-	"golang.org/x/sys/unix"
 )
 
 var CODE_RESET = "\x1b[0m"
@@ -45,20 +42,9 @@ func setCursorPos(row int, col int) {
 	os.Stdout.WriteString(fmt.Sprintf("\x1b[%d;%dH", row, col))
 }
 
-// getWindowDimensions returns the size of the window (row, col)
-func getWindowDimensions() (int, int) {
-	winsize, _ := unix.IoctlGetWinsize(int(os.Stdout.Fd()), syscall.TIOCGWINSZ)
-	return int(winsize.Row), int(winsize.Col)
-}
-
 // clear clears the terminal
 func clear() {
 	os.Stdout.WriteString("\x1b[H\x1b[2J")
-}
-
-// hideCursor makes the cursor disappear
-func hideCursor() {
-	os.Stdout.WriteString("\x1b[?25l")
 }
 
 // showCursor makes the cursor appear
