@@ -127,9 +127,15 @@ func (lr *LineReader) Read() (string, bool, error) {
 			}
 			lr.isReverseSearch = false
 			lr.cursorRow++
+			if lr.cursorRow > lr.winHeight {
+				lr.cursorRow = lr.winHeight
+			}
 			return string(lr.buffer), false, nil
 		case CodeCancel:
 			lr.cursorRow++
+			if lr.cursorRow > lr.winHeight {
+				lr.cursorRow = lr.winHeight
+			}
 			return "", false, nil
 		case CodeTerminate:
 			lr.resizeChan <- syscall.SIGTERM
@@ -249,8 +255,8 @@ func (lr *LineReader) processInput(input string, n *NilShell) ProcessingCode {
 			lr.insertText([]rune(input))
 		}
 	}
-
 	return CodeContinue
+
 }
 
 func extractCursorPos(input string) (int, int) {
@@ -267,7 +273,8 @@ func extractCursorPos(input string) (int, int) {
 
 // displayTooManyAutocomplete displays the too many autocomplete suggestions message
 func (lr *LineReader) displayTooManyAutocomplete(autoComplete []*AutoComplete, ns *NilShell) {
-	y, _ := getCursorPos()
+	y := lr.cursorRow
+	//y, _ := getCursorPos()
 	fmt.Printf("\r\n")
 	y++
 	fmt.Printf("%s%d suggestions, too many to display...%s", ns.AutoCompleteTooMuchStyle, len(autoComplete), CODE_RESET)
