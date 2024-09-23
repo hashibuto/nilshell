@@ -1,6 +1,9 @@
 # github.com/davecgh/go-spew v1.1.1
 ## explicit
 github.com/davecgh/go-spew/spew
+# github.com/hashibuto/nimble v0.6.2
+## explicit; go 1.19
+github.com/hashibuto/nimble
 # github.com/pmezard/go-difflib v1.0.0
 ## explicit
 github.com/pmezard/go-difflib/difflib
