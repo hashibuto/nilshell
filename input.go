@@ -6,6 +6,7 @@ import (
 	"log"
 	"log/slog"
 	"os"
+	"os/signal"
 	"runtime/debug"
 	"strings"
 	"sync"
@@ -32,10 +33,11 @@ type Suggestions struct {
 }
 
 type Reader struct {
+	initialized       bool
 	config            ReaderConfig
 	editOffset        int
 	prevEditOffset    int
-	historyBuffer     []string
+	lastSuggestion    string
 	logFile           *os.File
 	readBuffer        []rune
 	requireFullRender bool
@@ -43,6 +45,7 @@ type Reader struct {
 	signalChan        chan os.Signal
 	windowSize        *Size
 	renderPosition    Position
+	editPosition      Position
 	windowSizeLock    sync.Mutex
 	waitGroup         sync.WaitGroup
 }
@@ -60,13 +63,12 @@ type Position struct {
 type CompletionFunc func(beforeCursor string, afterCursor string, full string) *Suggestions
 
 type ReaderConfig struct {
-	CompletionFunction  CompletionFunc
-	ProcessFunction     func(string) error
-	HistoryAddFunction  func(string)
-	HistoryLoadFunction func() []string
-	PromptFunction      func() string
-	Debug               bool
-	LogFile             string
+	CompletionFunction CompletionFunc
+	ProcessFunction    func(string) error
+	HistoryManager     HistoryManager
+	PromptFunction     func() string
+	Debug              bool
+	LogFile            string
 }
 
 func NewReader(config ReaderConfig) *Reader {
@@ -84,15 +86,8 @@ func NewReader(config ReaderConfig) *Reader {
 			}
 		}
 
-		if config.HistoryAddFunction == nil {
-			config.HistoryAddFunction = func(s string) {
-			}
-		}
-
-		if config.HistoryLoadFunction == nil {
-			config.HistoryLoadFunction = func() []string {
-				return []string{}
-			}
+		if config.HistoryManager == nil {
+			config.HistoryManager = NewBasicHistoryManager()
 		}
 
 		if config.PromptFunction == nil {
@@ -103,10 +98,9 @@ func NewReader(config ReaderConfig) *Reader {
 	}
 
 	return &Reader{
-		config:        config,
-		historyBuffer: config.HistoryLoadFunction(),
-		signalChan:    make(chan os.Signal, 10),
-		readBuffer:    []rune{},
+		config:     config,
+		signalChan: make(chan os.Signal, 10),
+		readBuffer: []rune{},
 	}
 }
 
@@ -124,10 +118,6 @@ func (r *Reader) ReadLoop() error {
 	r.waitGroup.Add(1)
 	go r.sigThread()
 	defer r.waitGroup.Wait()
-
-	r.GetWindowSize()
-	termutils.RequestCursorPos()
-	r.requireFullRender = true
 
 	for {
 		value, err := r.readLine()
@@ -158,6 +148,7 @@ func (r *Reader) ReadLoop() error {
 			return err
 		}
 		termutils.RequestCursorPos()
+		r.config.HistoryManager.Push(value)
 	}
 
 	return nil
@@ -178,6 +169,8 @@ func (r *Reader) GetWindowSize() *Size {
 func (r *Reader) sigThread() {
 	defer r.waitGroup.Done()
 
+	signal.Notify(r.signalChan, syscall.SIGINT, syscall.SIGTERM, syscall.SIGWINCH)
+
 	for sig := range r.signalChan {
 		switch sig {
 		case syscall.SIGHUP:
@@ -196,9 +189,9 @@ func (r *Reader) sigThread() {
 			if r.windowSize == nil {
 				r.windowSize = &Size{}
 			}
-
 			r.windowSize.Rows = rows
 			r.windowSize.Columns = cols
+			r.log(fmt.Sprintf("WINDOW SIZE: rows:%d  cols:%d", r.windowSize.Rows, r.windowSize.Columns))
 			termutils.RequestCursorPos()
 			r.windowSizeLock.Unlock()
 		}
@@ -243,13 +236,26 @@ func (r *Reader) readLine() (string, error) {
 		r.searchMode = false
 	}()
 
+	if !r.initialized {
+		r.GetWindowSize()
+		termutils.RequestCursorPos()
+		r.requireFullRender = true
+	}
+
 	stdinBuf := make([]byte, 100)
+
+	var historyIter HistoryIterator
 	for {
-		termutils.HideCursor()
-		renderLines = r.render(isNewLine)
-		isNewLine = false
-		r.SetEditCursorPosition()
-		termutils.ShowCursor()
+		if r.initialized {
+			termutils.HideCursor()
+			renderLines = r.render(isNewLine)
+			isNewLine = false
+			r.SetEditCursorPosition()
+			termutils.ShowCursor()
+			r.log(fmt.Sprintf("OFFSET: %d  CUR_ROW: %d  CUR_COL: %d", r.editOffset, r.editPosition.Row, r.editPosition.Column))
+		} else {
+			r.initialized = true
+		}
 
 		nBytesRead, err := os.Stdin.Read(stdinBuf)
 		if err != nil {
@@ -266,19 +272,61 @@ func (r *Reader) readLine() (string, error) {
 			if r.searchMode {
 				r.requireFullRender = true
 				r.searchMode = false
-				continue
+				return r.lastSuggestion, nil
 			}
 			return strings.Trim(string(r.readBuffer), " \t\r\n"), nil
 		case KEY_CTRL_R:
 			if r.searchMode {
 				continue
 			}
+			r.editOffset = 0
+			r.readBuffer = []rune{}
 			r.requireFullRender = true
 			r.searchMode = true
 		case KEY_LEFT_ARROW:
 			if r.editOffset > 0 {
 				r.editOffset--
 			}
+		case KEY_UP_ARROW:
+			if r.searchMode {
+				continue
+			}
+
+			if historyIter == nil {
+				historyIter = r.config.HistoryManager.GetIterator()
+				r.readBuffer = []rune(historyIter.Backward())
+			} else {
+				r.readBuffer = []rune(historyIter.Backward())
+			}
+			r.requireFullRender = true
+		case KEY_DOWN_ARROW:
+			if historyIter == nil {
+				historyIter = r.config.HistoryManager.GetIterator()
+				r.readBuffer = []rune(historyIter.Backward())
+			} else {
+				r.readBuffer = []rune(historyIter.Forward())
+			}
+			r.requireFullRender = true
+		case KEY_ESCAPE:
+			if len(r.readBuffer) > 0 || r.searchMode {
+				r.editOffset = 0
+				r.readBuffer = []rune{}
+				r.requireFullRender = true
+				r.searchMode = false
+			}
+		case KEY_TAB:
+			if r.searchMode {
+				if r.lastSuggestion != "" {
+					r.readBuffer = []rune(r.lastSuggestion)
+					r.editOffset = termutils.Measure(r.lastSuggestion)
+				}
+				r.requireFullRender = true
+				r.searchMode = false
+			}
+		case KEY_END:
+			r.editOffset = len(r.readBuffer)
+		case KEY_HOME:
+			r.editOffset = 0
 		case KEY_RIGHT_ARROW:
 			if r.editOffset < len(r.readBuffer) {
 				r.editOffset++
@@ -291,9 +339,7 @@ func (r *Reader) readLine() (string, error) {
 				continue
 			}
 
-			if !r.searchMode {
-				r.updateBuffer(inputData)
-			}
+			r.updateBuffer(inputData)
 		}
 	}
 }
@@ -338,15 +384,28 @@ func (r *Reader) render(isNewLine bool) int {
 	length := 0
 	prompt := r.getCurrentPrompt()
 	suffix := ""
+	readBufferString := string(r.readBuffer)
+	searchResult := ""
 	if r.searchMode {
-		suffix = "\""
+		suffix = "`"
+		searchResults := r.config.HistoryManager.Search(readBufferString)
+		if len(searchResults) == 0 {
+			searchResult = ": <no results found>"
+			r.lastSuggestion = ""
+		} else {
+			searchResult = fmt.Sprintf(": %s", searchResults[0])
+			r.lastSuggestion = searchResults[0]
+		}
+	} else {
+		r.lastSuggestion = ""
 	}
 
 	if r.requireFullRender {
-		fmt.Printf("%s%s%s", prompt, string(r.readBuffer), suffix)
-		termutils.ClearTerminalFromCursor()
+		r.MoveCursorToRenderStart()
+		fmt.Printf("%s%s%s%s", prompt, readBufferString, suffix, searchResult)
 		r.requireFullRender = false
-		length = termutils.Measure(prompt) + termutils.Measure(string(r.readBuffer)) + termutils.Measure(suffix)
+		length = termutils.Measure(prompt) + termutils.Measure(readBufferString) + termutils.Measure(suffix) + termutils.Measure(searchResult)
+		termutils.ClearTerminalFromCursor()
 	} else if isNewLine {
 		// this is the first time rendering this line, we want to render the prompt
 		fmt.Printf("%s", prompt)
@@ -357,11 +416,9 @@ func (r *Reader) render(isNewLine bool) int {
 			pos = r.editOffset
 		}
 		r.SetEditCursorPosition(pos)
-		r.log(fmt.Sprintf("POS: %d  BUF: %s", pos, string(r.readBuffer)))
-
-		fmt.Printf("%s", string(r.readBuffer[pos:]))
+		fmt.Printf("%s%s%s", string(r.readBuffer[pos:]), suffix, searchResult)
 		termutils.ClearLineFromCursor()
-		length = termutils.Measure(prompt) + termutils.Measure(string(r.readBuffer))
+		length = termutils.Measure(prompt) + termutils.Measure(readBufferString) + termutils.Measure(suffix) + termutils.Measure(searchResult)
 	}
 	r.prevEditOffset = r.editOffset
 
@@ -389,7 +446,7 @@ func (r *Reader) getCurrentPrompt() string {
 		return r.config.PromptFunction()
 	}
 
-	return "(reverse-i-search) \""
+	return "(reverse-i-search) `"
 }
 
 // resetsCursorPosition sets the cursor position to the beginning of the current rendering position.
@@ -429,6 +486,12 @@ func (r *Reader) SetEditCursorPosition(offset ...int) {
 	col := 1 + (numCols % r.windowSize.Columns)
 	row := r.renderPosition.Row + (numCols / r.windowSize.Columns)
 	termutils.SetCursorPos(row, col)
+	r.editPosition.Row = row
+	r.editPosition.Column = col
+}
+
+func (r *Reader) MoveCursorToRenderStart() {
+	termutils.SetCursorPos(r.renderPosition.Row, r.renderPosition.Column)
 }
 
 func (r *Reader) log(msg string) {
