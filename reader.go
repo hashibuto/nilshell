@@ -256,7 +256,6 @@ func (r *Reader) readLine() (string, error) {
 		if r.initialized {
 			termutils.HideCursor()
 			renderLength, renderLines, suggLines = r.render(prompt, isNewLine, suggestions)
-			r.log(fmt.Sprintf("sugg lines: %d", suggLines))
 			if suggLines > 0 {
 				r.renderPosition.Row += suggLines
 				if r.renderPosition.Row > r.windowSize.Rows {
@@ -269,7 +268,7 @@ func (r *Reader) readLine() (string, error) {
 			suggestions = nil
 			r.SetEditCursorPosition(prompt)
 			termutils.ShowCursor()
-			r.log(fmt.Sprintf("OFFSET: %d WIND_ROW: %d  WIND_COL: %d  CUR_ROW: %d  CUR_COL: %d", r.editOffset, r.windowSize.Rows, r.windowSize.Columns, r.editPosition.Row, r.editPosition.Column))
+			r.log(fmt.Sprintf("OFFSET: %d WND_ROW: %d  WND_COL: %d  CUR_ROW: %d  CUR_COL: %d", r.editOffset, r.windowSize.Rows, r.windowSize.Columns, r.editPosition.Row, r.editPosition.Column))
 		} else {
 			r.initialized = true
 		}
@@ -601,7 +600,7 @@ func (r *Reader) getCurrentPrompt() string {
 // resetsCursorPosition sets the cursor position to the beginning of the current rendering position.
 // It calculates the position based on the current
 func (r *Reader) resetStartingCursorPosition(prompt string, row int, col int) {
-	r.log(fmt.Sprintf("CURSOR POS: r:%d c:%d", row, col))
+	r.log(fmt.Sprintf("RESET CURSOR POS: r:%d c:%d", row, col))
 	if len(r.readBuffer) > 0 {
 		promptLen := termutils.Measure(prompt)
 		col -= (termutils.Measure(string(r.readBuffer)) + promptLen)
@@ -620,8 +619,6 @@ func (r *Reader) resetStartingCursorPosition(prompt string, row int, col int) {
 
 	r.renderPosition.Row = row
 	r.renderPosition.Column = col
-	r.log(fmt.Sprintf("CURSOR POS NEW: r:%d c:%d", row, col))
-
 	r.requireFullRender = true
 	termutils.SetCursorPos(r.renderPosition.Row, r.renderPosition.Column)
 }
