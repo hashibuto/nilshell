@@ -44,7 +44,8 @@ config := ns.ReaderConfig{
         // Return a prompt with terminal escape chars to add style
 
         return "$ "
-    }
+    },
+
 	Debug: false,
 
     // enable the log file to dump debugging info to a tailable log file
