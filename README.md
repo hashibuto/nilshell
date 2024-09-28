@@ -46,7 +46,7 @@ config := ns.ReaderConfig{
         return "$ "
     },
 
-	Debug: false,
+    Debug: false,
 
     // enable the log file to dump debugging info to a tailable log file
     LogFile: "",
