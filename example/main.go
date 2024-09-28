@@ -5,67 +5,86 @@ import (
 	"strings"
 
 	ns "github.com/hashibuto/nilshell"
+	"github.com/hashibuto/nimble"
 )
 
-var ac []*ns.AutoComplete = []*ns.AutoComplete{
+var suggestions = []*ns.Suggestion{
 	{
-		Value:   "helpur",
-		Display: "helpur (-h / --help)",
+		Value:   "carrot",
+		Display: "carrot (is an orange vegetable)",
 	},
 	{
-		Value:   "helpinhand",
-		Display: "helpinhand (-g / --helper) awesome helpster",
+		Value:   "cucumber",
+		Display: "cucumber (green and refreshing)",
 	},
 	{
-		Value:   "helping",
-		Display: "helping (-g / --helper)  helping of fiber a day",
+		Value:   "zucchini",
+		Display: "zuccini (a kind of squash)",
 	},
 	{
-		Value:   "dog",
-		Display: "dog",
+		Value:   "tomato",
+		Display: "tomato (great on salad)",
 	},
 	{
-		Value:   "doggy",
-		Display: "doggy",
+		Value:   "pommodori",
+		Display: "pommodori (a kind of tomato)",
 	},
 	{
-		Value:   "doggo",
-		Display: "doggo",
+		Value:   "pepper",
+		Display: "pepper (green or red)",
 	},
 	{
-		Value:   "big1",
-		Display: "big column is a big column, let's see how much we can fit into it to make it work",
+		Value:   "paprika",
+		Display: "paprika",
 	},
 	{
-		Value:   "big2",
-		Display: "big column is a big column, let's see how much we can fit into it to make it work",
+		Value:   "tom-and-jerry",
+		Display: "tom-and-jerry (cat and mouse)",
 	},
 	{
-		Value:   "big3",
-		Display: "big column is a big column, let's see how much we can fit into it to make it work",
+		Value:   "zoo",
+		Display: "zoo",
 	},
 	{
-		Value:   "big4",
-		Display: "big column is a big column, let's see how much we can fit into it to make it work",
+		Value:   "papa",
+		Display: "papa (father)",
+	},
+	{
+		Value:   "cuckoo-clock",
+		Display: "cuckoo-clock (a clock with bird sound)",
+	},
+	{
+		Value:   "cartographer",
+		Display: "cartographer (one who does mapping?)",
 	},
 }
 
-func main() {
-	shell := ns.NewShell(
-		"\033[33m » \033[0m",
-		func(beforeCursor, afterCursor string, full string) []*ns.AutoComplete {
-			newAc := []*ns.AutoComplete{}
-			for _, acItem := range ac {
-				if strings.HasPrefix(acItem.Value, beforeCursor) {
-					newAc = append(newAc, acItem)
-				}
-			}
+func completer(beforeCursor, afterCursor, full string) *ns.Suggestions {
+	x := strings.ToLower(beforeCursor)
+	suggs := nimble.Filter[*ns.Suggestion](func(index int, v *ns.Suggestion) bool {
+		return strings.HasPrefix(strings.ToLower(v.Value), x)
+	}, suggestions...)
 
-			return newAc
+	return &ns.Suggestions{
+		Total: len(suggs),
+		Items: suggs,
+	}
+}
+
+func main() {
+	r := ns.NewReader(ns.ReaderConfig{
+		Debug:   true,
+		LogFile: "/tmp/log.txt",
+		ProcessFunction: func(s string) error {
+			fmt.Println("got command")
+			return nil
 		},
-		func(ns *ns.NilShell, cmd string) {
-			fmt.Println("Executed a command")
+		CompletionFunction: completer,
+		HistoryManager:     ns.NewPersistedHistoryManager(10, "/tmp/example.hist"),
+		PromptFunction: func() string {
+			return "$ "
+			//return fmt.Sprintf("%s$%s ", termutils.CreateFgColor(0, 255, 255), termutils.STYLE_RESET)
 		},
-	)
-	shell.ReadUntilTerm()
+	})
+	r.ReadLoop()
 }

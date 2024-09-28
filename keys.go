@@ -1,12 +1,12 @@
 package ns
 
 const (
-	KEY_CTRL_C      = "\x03"
-	KEY_CTRL_D      = "\x04"
-	KEY_CTRL_L      = "\x0C"
+	KEY_CTRL_C      = "\x03" // Signal interrupt
+	KEY_CTRL_D      = "\x04" // Signal EOF
+	KEY_CTRL_L      = "\x0C" // Clear terminal
 	KEY_TAB         = "\x09"
 	KEY_ENTER       = "\x0D"
-	KEY_CTRL_R      = "\x12"
+	KEY_CTRL_R      = "\x12" // Search backward
 	KEY_CTRL_T      = "\x14"
 	KEY_ESCAPE      = "\x1B"
 	KEY_BACKSPACE   = "\x7F"

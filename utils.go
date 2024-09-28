@@ -1,14 +1,12 @@
 package ns
 
-import (
-	"github.com/hashibuto/nilshell/pkg/term"
-)
+import "github.com/hashibuto/nilshell/pkg/termutils"
 
 // CalculateColumnWidth returns the column width and number of columns per row
 func CalculateColumnWidth(allText []string, screenWidth int, minColumns int, gutterWidth int) (int, int) {
 	maxWidth := 0
 	for _, text := range allText {
-		measuredWidth := term.Measure(text)
+		measuredWidth := termutils.Measure(text)
 		if measuredWidth > maxWidth {
 			maxWidth = measuredWidth
 		}
