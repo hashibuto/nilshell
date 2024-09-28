@@ -1,503 +1,532 @@
 package ns
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"log"
+	"log/slog"
 	"os"
 	"os/exec"
-	"regexp"
+	"os/signal"
 	"runtime/debug"
-	"strconv"
 	"strings"
+	"sync"
 	"syscall"
+	"time"
 
-	tm "github.com/hashibuto/nilshell/pkg/term"
+	"github.com/hashibuto/nilshell/pkg/termutils"
 	"golang.org/x/term"
 )
 
-type ProcessingCode int8
-
-var EscapeFinder = regexp.MustCompile("\x1b\\[[^a-zA-Z]+[a-zA-Z]")
-
-const (
-	CodeContinue ProcessingCode = iota
-	CodeComplete
-	CodeCancel
-	CodeTerminate
+var (
+	ErrInterrupt = errors.New("interrupt")
+	ErrEof       = errors.New("eof")
 )
 
-type LineReader struct {
-	DumpChan        chan []byte
-	lastSearchText  []rune
-	nilShell        *NilShell
-	isReverseSearch bool
-	promptLength    int
-	completer       Completer
-	bufferOffset    int
-	resizeChan      chan os.Signal
-	buffer          []rune
-	winWidth        int
-	winHeight       int
-	cursorRow       int
-	resizeComplete  chan struct{}
-	isRaw           bool
-	savedFd         int
+type Suggestion struct {
+	Display string
+	Value   string
 }
 
-var reverseSearchPrompt = "(reverse-i- search: `"
-
-// NewLineReader creates a new LineReader object
-func NewLineReader(completer Completer, resizeChan chan os.Signal, nilShell *NilShell) *LineReader {
-	lr := &LineReader{
-		completer:      completer,
-		resizeChan:     resizeChan,
-		buffer:         []rune{},
-		nilShell:       nilShell,
-		resizeComplete: make(chan struct{}, 1),
-	}
-
-	lr.winHeight, lr.winWidth = getWindowDimensions()
-	go lr.resizeWatcher()
-
-	return lr
+type Suggestions struct {
+	Total int // reflects the total (could be longer than len(.Items)
+	Items []*Suggestion
 }
 
-// Read will read a single command from the command line and can be interrupted by pressing <enter>, <ctrl+c>, or <ctrl+d>.
-// Read responds to changes in the terminal window size.
-func (lr *LineReader) Read() (string, bool, error) {
-	stillRaw := lr.isRaw
-	if !lr.isRaw {
-		lr.savedFd = int(os.Stdin.Fd())
-		preState, err := term.MakeRaw(lr.savedFd)
-		if err != nil {
-			return "", false, err
+type Reader struct {
+	initialized       bool
+	config            ReaderConfig
+	editOffset        int
+	prevEditOffset    int
+	lastSuggestion    string
+	logFile           *os.File
+	readBuffer        []rune
+	requireFullRender bool
+	searchMode        bool
+	signalChan        chan os.Signal
+	windowSize        *Size
+	renderPosition    Position
+	editPosition      Position
+	windowSizeLock    sync.Mutex
+	waitGroup         sync.WaitGroup
+}
+
+type Size struct {
+	Rows    int
+	Columns int
+}
+
+type Position struct {
+	Row    int
+	Column int
+}
+
+type CompletionFunc func(beforeCursor string, afterCursor string, full string) *Suggestions
+
+type ReaderConfig struct {
+	CompletionFunction CompletionFunc
+	ProcessFunction    func(string) error
+	HistoryManager     HistoryManager
+	PromptFunction     func() string
+	Debug              bool
+	LogFile            string
+}
+
+func NewReader(config ReaderConfig) *Reader {
+	if config.CompletionFunction == nil {
+		config.CompletionFunction = func(beforeCursor, afterCursor, full string) *Suggestions {
+			return &Suggestions{
+				Total: 0,
+				Items: []*Suggestion{},
+			}
 		}
-		lr.isRaw = true
-		lr.nilShell.preState = preState
 	}
-	unRaw := true
 
-	// Try our best not to leave the terminal in raw mode
-	defer func() {
-		if !unRaw {
+	if config.ProcessFunction == nil {
+		config.ProcessFunction = func(s string) error {
+			return nil
+		}
+	}
+
+	if config.HistoryManager == nil {
+		config.HistoryManager = NewBasicHistoryManager(100)
+	}
+
+	if config.PromptFunction == nil {
+		config.PromptFunction = func() string {
+			return "$ "
+		}
+	}
+
+	return &Reader{
+		config:     config,
+		signalChan: make(chan os.Signal, 10),
+		readBuffer: []rune{},
+	}
+}
+
+// ReadLoop reads commands from the standard input and blocks until exit
+func (r *Reader) ReadLoop() error {
+	defer r.config.HistoryManager.Exit()
+	if r.config.LogFile != "" {
+		var err error
+		r.logFile, err = os.OpenFile(r.config.LogFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+		if err != nil {
+			return err
+		}
+		defer r.logFile.Close()
+	}
+
+	r.waitGroup.Add(1)
+	go r.sigThread()
+	defer r.waitGroup.Wait()
+
+	for {
+		value, err := r.readLine()
+		switch err {
+		case ErrEof:
+			r.signalChan <- syscall.SIGHUP
+			return nil
+		case ErrInterrupt:
+			continue
+		}
+
+		if err != nil {
+			return err
+		}
+
+		// do some processing on value if anything to process
+		if len(value) == 0 {
+			continue
+		}
+
+		err = r.config.ProcessFunction(value)
+		if err == ErrEof {
+			r.signalChan <- syscall.SIGHUP
+			break
+		}
+
+		if err != nil {
+			return err
+		}
+		termutils.RequestCursorPos()
+		r.config.HistoryManager.Push(value)
+	}
+
+	return nil
+}
+
+func (r *Reader) GetWindowSize() *Size {
+	r.windowSizeLock.Lock()
+	defer r.windowSizeLock.Unlock()
+
+	if r.windowSize == nil {
+		r.windowSize = &Size{}
+		r.windowSize.Rows, r.windowSize.Columns = termutils.GetWindowSize()
+	}
+
+	return r.windowSize
+}
+
+func (r *Reader) sigThread() {
+	defer r.waitGroup.Done()
+
+	signal.Notify(r.signalChan, syscall.SIGINT, syscall.SIGTERM, syscall.SIGWINCH)
+
+	for sig := range r.signalChan {
+		switch sig {
+		case syscall.SIGHUP:
+			// This comes from within the application
 			return
+		case syscall.SIGINT, syscall.SIGTERM:
+			// This should cause the main stdin loop to exit
+			_, err := os.Stdin.WriteString(KEY_CTRL_D)
+			if err != nil {
+				slog.Error(err.Error())
+			}
+		case syscall.SIGWINCH:
+			// System indicates that a resize of the terminal window occurred
+			rows, cols := termutils.GetWindowSize()
+			r.windowSizeLock.Lock()
+			if r.windowSize == nil {
+				r.windowSize = &Size{}
+			}
+			r.windowSize.Rows = rows
+			r.windowSize.Columns = cols
+			r.log(fmt.Sprintf("WINDOW SIZE: rows:%d  cols:%d", r.windowSize.Rows, r.windowSize.Columns))
+			termutils.RequestCursorPos()
+			r.windowSizeLock.Unlock()
 		}
-		lr.isRaw = false
-		err := recover()
-		term.Restore(lr.savedFd, lr.nilShell.preState)
+	}
+}
+
+// ReadInput displays the prompt and reads input until a terminating character is encountered.  Terminating characters include <Enter>,
+// <Ctrl+D>, and <Ctrl+C>.
+func (r *Reader) readLine() (string, error) {
+	renderLines := 0
+	r.editOffset = 0
+	r.prevEditOffset = 0
+	isNewLine := true
+
+	stdioFd := int(os.Stdin.Fd())
+	preState, err := term.MakeRaw(stdioFd)
+	if err != nil {
+		return "", err
+	}
+	var suggestions *Suggestions
+
+	defer func() {
+		r.readBuffer = []rune{}
+		rErr := recover()
+
+		err = term.Restore(stdioFd, preState)
 		if err != nil {
-			fmt.Printf("Caught panic before exiting\n%v\n", err)
-			if lr.nilShell.Debug {
+			log.Fatalf("fatal error: unable to restore terminal: %v", err)
+		}
+
+		if rErr != nil {
+			fmt.Printf("caught panic in called function\n%v\n", err)
+			if r.config.Debug {
 				fmt.Println(string(debug.Stack()))
 			}
 		}
-		if err != nil {
-			os.Exit(1)
+
+		fmt.Printf("\n")
+		r.renderPosition.Row += renderLines + 1
+		if r.renderPosition.Row > r.windowSize.Rows {
+			r.renderPosition.Row = r.windowSize.Rows
 		}
+		r.searchMode = false
 	}()
 
-	if !stillRaw {
-		cursorRow, _ := getCursorPos()
-		setCursorPos(cursorRow, 1)
-		lr.cursorRow = cursorRow
-	} else {
-		fmt.Printf("\r")
+	if !r.initialized {
+		r.GetWindowSize()
+		termutils.RequestCursorPos()
+		r.requireFullRender = true
 	}
-	lr.bufferOffset = 0
-	lr.buffer = []rune{}
-	fmt.Printf("%s", lr.nilShell.Prompt)
-	lr.promptLength = len([]rune(EscapeFinder.ReplaceAllString(lr.nilShell.Prompt, "")))
 
-	iBuf := make([]byte, 20)
+	stdinBuf := make([]byte, 100)
+
+	var historyIter HistoryIterator
+	var suggLines int
+	var renderLength int
 	for {
-		n, err := os.Stdin.Read(iBuf)
-		if err != nil {
-			return "", false, err
-		}
-		if lr.DumpChan != nil {
-			lr.DumpChan <- iBuf[:n]
-		}
-
-		iString := string(iBuf[:n])
-		code := lr.processInput(iString, lr.nilShell)
-		switch code {
-		case CodeComplete:
-			if len(lr.buffer) == 0 {
-				unRaw = false
-			}
-			lr.isReverseSearch = false
-			lr.cursorRow++
-			return string(lr.buffer), false, nil
-		case CodeCancel:
-			lr.cursorRow++
-			return "", false, nil
-		case CodeTerminate:
-			lr.resizeChan <- syscall.SIGTERM
-			return "", true, nil
-		}
-	}
-}
-
-// resizeWatcher waits for input on the resize channel and resizes accordingly.  when the channel receives a SIGTERM the thread exists.
-// the SIGTERM originates internally, not from outside the process.
-func (lr *LineReader) resizeWatcher() {
-	for {
-		sig := <-lr.resizeChan
-		if sig == syscall.SIGTERM {
-			return
-		}
-
-		lr.resizeWindow(true)
-	}
-}
-
-// processInput executes one iteration of input processing which would occur in the interactive read loop
-func (lr *LineReader) processInput(input string, n *NilShell) ProcessingCode {
-	switch input {
-	case KEY_CTRL_R:
-		lr.isReverseSearch = true
-		lr.renderComplete()
-	case KEY_CTRL_T:
-		if err := lr.openInEditor(); err != nil {
-			fmt.Fprintf(os.Stderr, "\r\n%s\n", err)
-			// Carriage Return (\r) to return the cursor to the left hand side (like a typewriter)
-			// Line Feed (\n) to bring us to a new line
-			// Print the error, and a final Line Feed to ensure the next prompt is up on a new line
-			return CodeCancel // Return CodeCancel to generate a new prompt.
-		}
-	case KEY_UP_ARROW:
-		if n.History.Any() {
-			cmd := n.History.Older()
-			lr.setText([]rune(cmd))
-		}
-	case KEY_DOWN_ARROW:
-		if n.History.Any() {
-			cmd := n.History.Newer()
-			lr.setText([]rune(cmd))
-		}
-	case KEY_LEFT_ARROW:
-		if lr.bufferOffset > 0 {
-			lr.bufferOffset--
-		}
-		lr.setCursorPos()
-	case KEY_RIGHT_ARROW:
-		if lr.bufferOffset < len(lr.buffer) {
-			lr.bufferOffset++
-		}
-		lr.setCursorPos()
-	case KEY_HOME:
-		lr.bufferOffset = 0
-		lr.setCursorPos()
-	case KEY_END:
-		lr.bufferOffset = len(lr.buffer)
-		lr.setCursorPos()
-	case KEY_ENTER:
-		if lr.isReverseSearch {
-			buffer := make([]rune, len(lr.lastSearchText))
-			copy(buffer, lr.lastSearchText)
-			lr.buffer = buffer
-		}
-		fmt.Printf("\n")
-		return CodeComplete
-	case KEY_CTRL_C:
-		fmt.Printf("\n")
-		return CodeCancel
-	case KEY_CTRL_D:
-		fmt.Printf("\r\n")
-		return CodeTerminate
-	case KEY_CTRL_L:
-		clear()
-		// Tell LineReader that we are back at the first row,
-		// since it keeps track of the cursor itself.
-		lr.cursorRow = 1
-		lr.renderComplete()
-	case KEY_DEL:
-		lr.deleteAtCurrentPos()
-	case KEY_TAB:
-		if lr.isReverseSearch {
-			buffer := make([]rune, len(lr.lastSearchText))
-			copy(buffer, lr.lastSearchText)
-			lr.buffer = buffer
-			lr.isReverseSearch = false
-			lr.bufferOffset = len(lr.buffer)
-			lr.setCursorPos()
-			lr.renderComplete()
-		} else {
-			autoComplete := lr.completer(string(lr.buffer[:lr.bufferOffset]), string(lr.buffer[lr.bufferOffset:]), string(lr.buffer))
-			if autoComplete != nil {
-				if len(autoComplete) == 1 {
-					ac := autoComplete[0]
-					lr.completeText([]rune(ac.Value))
-				} else if len(autoComplete) > 1 && len(autoComplete) <= n.AutoCompleteLimit {
-					lr.displayAutocomplete(autoComplete, n)
-				} else if len(autoComplete) > n.AutoCompleteLimit {
-					lr.displayTooManyAutocomplete(autoComplete, n)
+		prompt := r.getCurrentPrompt()
+		if r.initialized {
+			termutils.HideCursor()
+			renderLength, renderLines, suggLines = r.render(prompt, isNewLine, suggestions)
+			if suggLines > 0 {
+				r.renderPosition.Row += suggLines
+				if r.renderPosition.Row > r.windowSize.Rows {
+					r.renderPosition.Row = r.windowSize.Rows
 				}
+			} else if r.renderPosition.Row+renderLines > r.windowSize.Rows {
+				r.renderPosition.Row = r.windowSize.Rows - renderLines
 			}
-		}
-	case KEY_BACKSPACE:
-		if lr.bufferOffset > 0 {
-			lr.bufferOffset--
-			lr.deleteAtCurrentPos()
-		}
-	default:
-		if strings.Contains(input, ";") && strings.HasSuffix(input, "R") {
-			// this got triggered by a window resize and subsequent request for the new cursor position
-			lr.cursorRow, _ = extractCursorPos(input)
-			lr.winHeight, lr.winWidth = getWindowDimensions()
+			isNewLine = false
+			suggestions = nil
+			r.SetEditCursorPosition(prompt)
+			termutils.ShowCursor()
+			r.log(fmt.Sprintf("OFFSET: %d WND_ROW: %d  WND_COL: %d  CUR_ROW: %d  CUR_COL: %d", r.editOffset, r.windowSize.Rows, r.windowSize.Columns, r.editPosition.Row, r.editPosition.Column))
 		} else {
-			lr.insertText([]rune(input))
+			r.initialized = true
+		}
+
+		nBytesRead, err := os.Stdin.Read(stdinBuf)
+		if err != nil {
+			return "", err
+		}
+		inputData := string(stdinBuf[:nBytesRead])
+
+		switch inputData {
+		case KEY_CTRL_C:
+			r.MoveCursorToRenderEnd(renderLength)
+			return "", ErrInterrupt
+		case KEY_CTRL_D:
+			r.MoveCursorToRenderEnd(renderLength)
+			return "", ErrEof
+		case KEY_ENTER:
+			r.MoveCursorToRenderEnd(renderLength)
+			if r.searchMode {
+				r.requireFullRender = true
+				r.searchMode = false
+				return r.lastSuggestion, nil
+			}
+			return strings.Trim(string(r.readBuffer), " \t\r\n"), nil
+		case KEY_CTRL_R:
+			if r.searchMode {
+				continue
+			}
+			r.editOffset = 0
+			r.readBuffer = []rune{}
+			r.requireFullRender = true
+			r.searchMode = true
+		case KEY_LEFT_ARROW:
+			if r.editOffset > 0 {
+				r.editOffset--
+			}
+		case KEY_UP_ARROW:
+			if r.searchMode {
+				continue
+			}
+
+			if historyIter == nil {
+				historyIter = r.config.HistoryManager.GetIterator()
+				r.readBuffer = []rune(historyIter.Backward())
+			} else {
+				r.readBuffer = []rune(historyIter.Backward())
+			}
+			r.editOffset = termutils.Measure(string(r.readBuffer))
+			r.requireFullRender = true
+		case KEY_DOWN_ARROW:
+			if r.searchMode {
+				continue
+			}
+
+			if historyIter == nil {
+				historyIter = r.config.HistoryManager.GetIterator()
+				r.readBuffer = []rune(historyIter.Backward())
+			} else {
+				r.readBuffer = []rune(historyIter.Forward())
+			}
+			r.editOffset = termutils.Measure(string(r.readBuffer))
+			r.requireFullRender = true
+		case KEY_ESCAPE:
+			if len(r.readBuffer) > 0 || r.searchMode {
+				r.editOffset = 0
+				r.readBuffer = []rune{}
+				r.requireFullRender = true
+				r.searchMode = false
+			}
+		case KEY_TAB:
+			if r.searchMode {
+				if r.lastSuggestion != "" {
+					r.readBuffer = []rune(r.lastSuggestion)
+					r.editOffset = termutils.Measure(r.lastSuggestion)
+				}
+				r.requireFullRender = true
+				r.searchMode = false
+				continue
+			}
+
+			if len(r.readBuffer) == 0 {
+				continue
+			}
+
+			suggestions = r.config.CompletionFunction(string(r.readBuffer[:r.editOffset]), string(r.readBuffer[r.editOffset:]), string(r.readBuffer))
+		case KEY_END:
+			r.editOffset = len(r.readBuffer)
+		case KEY_HOME:
+			r.editOffset = 0
+		case KEY_RIGHT_ARROW:
+			if r.editOffset < len(r.readBuffer) {
+				r.editOffset++
+			}
+		case KEY_CTRL_L:
+			termutils.ClearTerminal()
+			termutils.SetCursorPos(1, 1)
+			r.renderPosition.Row = 1
+			r.requireFullRender = true
+		case KEY_CTRL_T:
+			if err := r.openInEditor(); err != nil {
+				fmt.Fprintf(os.Stderr, "\r\n%s\n", err)
+				// Carriage Return (\r) to return the cursor to the left hand side (like a typewriter)
+				// Line Feed (\n) to bring us to a new line
+				// Print the error, and a final Line Feed to ensure the next prompt is up on a new line
+				return "", ErrInterrupt
+			}
+		default:
+			if r.parseControlSequence(prompt, inputData) {
+				continue
+			}
+
+			r.updateBuffer(inputData)
 		}
 	}
-
-	return CodeContinue
 }
 
-func extractCursorPos(input string) (int, int) {
-	section := input[2 : len(input)-1]
-	parts := strings.Split(section, ";")
-	if len(parts) < 2 {
-		panic(fmt.Errorf("cursor position response too short: %s", []byte(input)))
-	}
-	row, _ := strconv.Atoi(parts[0])
-	col, _ := strconv.Atoi(parts[1])
+func (r *Reader) updateBuffer(data string) {
+	cutBegin := r.editOffset
+	cutEnd := r.editOffset
 
-	return row, col
+	switch data {
+	case KEY_DEL:
+		cutEnd++
+		data = ""
+	case KEY_BACKSPACE:
+		if cutBegin > 0 {
+			cutBegin--
+		}
+		data = ""
+	}
+
+	newRunes := []rune{}
+	if cutBegin > 0 {
+		newRunes = append(newRunes, r.readBuffer[:cutBegin]...)
+	}
+	if len(data) > 0 {
+		newRunes = append(newRunes, []rune(data)...)
+	}
+	if cutEnd < len(r.readBuffer) {
+		newRunes = append(newRunes, r.readBuffer[cutEnd:]...)
+	}
+
+	if cutBegin != r.editOffset {
+		r.editOffset = cutBegin
+	} else {
+		r.editOffset += termutils.Measure(data)
+	}
+
+	r.readBuffer = newRunes
 }
 
-// displayTooManyAutocomplete displays the too many autocomplete suggestions message
-func (lr *LineReader) displayTooManyAutocomplete(autoComplete []*AutoComplete, ns *NilShell) {
-	y, _ := getCursorPos()
-	fmt.Printf("\r\n")
-	y++
-	fmt.Printf("%s%d suggestions, too many to display...%s", ns.AutoCompleteTooMuchStyle, len(autoComplete), CODE_RESET)
-	y++
-	fmt.Printf("\r\n")
-	if y > lr.winHeight {
-		y = lr.winHeight
-	}
-	lr.cursorRow = y
-	lr.renderComplete()
-}
+func (r *Reader) makeSuggestionString(suggesions *Suggestions) (string, int) {
+	fg := termutils.CreateFgColor(83, 150, 237)
+	lines := 1
+	numSuggestions := len(suggesions.Items)
+	totalSuggestions := suggesions.Total
+	suggString := []string{fmt.Sprintf("\r\n%s", fg)}
 
-// displayAutocomplete displays the autocomplete suggestions
-func (lr *LineReader) displayAutocomplete(autoComplete []*AutoComplete, ns *NilShell) {
-	disp := make([]string, len(autoComplete))
-	for i, ac := range autoComplete {
-		disp[i] = ac.Display
+	var header string
+	if numSuggestions == totalSuggestions {
+		header = fmt.Sprintf("%s%d suggestions:%s%s", termutils.STYLE_BOLD, numSuggestions, termutils.STYLE_RESET, fg)
+	} else {
+		header = fmt.Sprintf("%s%d suggestions (%d more...):%s%s", termutils.STYLE_BOLD, numSuggestions, totalSuggestions-numSuggestions, termutils.STYLE_RESET, fg)
 	}
 
-	y, _ := getCursorPos()
-	fmt.Printf("\r\n%s", ns.AutoCompleteSuggestStyle)
-	y++
+	lines += (termutils.Measure(header) / r.windowSize.Columns) + 1
+	suggString = append(suggString, header, "\r\n")
+
+	disp := make([]string, len(suggesions.Items))
+	for i, item := range suggesions.Items {
+		disp[i] = item.Display
+	}
 
 	var colNum int
-	colWidth, numCols := CalculateColumnWidth(disp, ns.lineReader.winWidth, 2, 2)
-	for i, ac := range autoComplete {
-		fmt.Printf("%s", tm.PadRight(ac.Display, colWidth, 2))
+	colWidth, numCols := CalculateColumnWidth(disp, r.windowSize.Columns, 2, 2)
+	for i, item := range suggesions.Items {
+		suggString = append(suggString, termutils.PadRight(item.Display, colWidth, 2))
 		colNum = i % numCols
 		if colNum == numCols-1 {
 			// End of line
-			y++
-			fmt.Print("\r\n")
+			suggString = append(suggString, "\r\n")
+			lines++
 		}
 	}
-	if colNum != numCols-1 {
-		y++
-		fmt.Printf("%s\n\r", CODE_RESET)
+
+	if suggString[len(suggString)-1] != "\r\n" {
+		suggString = append(suggString, "\r\n")
+		lines++
 	}
-	if y > lr.winHeight {
-		y = lr.winHeight
-	}
-	lr.cursorRow = y
-	lr.renderComplete()
+
+	suggString = append(suggString, termutils.STYLE_RESET)
+
+	return strings.Join(suggString, ""), lines
 }
 
-// setText sets the current input text
-func (lr *LineReader) setText(input []rune) {
-	lr.buffer = input
-	lr.bufferOffset = len(lr.buffer)
-	lr.renderComplete()
-}
-
-// insertText inserts text at the current cursor position
-func (lr *LineReader) insertText(input []rune) {
-	runeBuffer := []rune{}
-	runeBuffer = append(runeBuffer, lr.buffer[:lr.bufferOffset]...)
-	runeBuffer = append(runeBuffer, input...)
-	runeBuffer = append(runeBuffer, lr.buffer[lr.bufferOffset:]...)
-	lr.buffer = runeBuffer
-
-	newBufferOffset := lr.bufferOffset + len(input)
-
-	hideCursor()
-	lr.renderFromCursor()
-	lr.bufferOffset = newBufferOffset
-	lr.setCursorPos()
-	showCursor()
-}
-
-// completeText performs an autocomplete operation
-func (lr *LineReader) completeText(input []rune) {
-	// hunt back to the previous either space, or beginning of the text from the current cursor position
-	inputStr := string(input)
-
-	for i := lr.bufferOffset - 1; i >= 0; i-- {
-		if lr.buffer[i] == ' ' || i == 0 {
-			j := i
-			if lr.buffer[i] == ' ' {
-				j++
-			}
-			strPrefix := string(lr.buffer[j:lr.bufferOffset])
-
-			if !strings.HasPrefix(inputStr, strPrefix) {
-				return
-			}
-
-			runePrefix := []rune(strPrefix)
-			lr.insertText(input[len(runePrefix):])
+// render renders the edit "line" and returns the number of screen rows used in the render
+func (r *Reader) render(prompt string, isNewLine bool, suggestions *Suggestions) (int, int, int) {
+	length := 0
+	extraLines := 0
+	suffix := ""
+	readBufferString := string(r.readBuffer)
+	searchResult := ""
+	if r.searchMode {
+		suffix = "`"
+		searchResults := r.config.HistoryManager.Search(readBufferString)
+		if len(searchResults) == 0 {
+			searchResult = ": <no results found>"
+			r.lastSuggestion = ""
+		} else {
+			searchResult = fmt.Sprintf(": %s", searchResults[0])
+			r.lastSuggestion = searchResults[0]
 		}
-	}
-}
-
-// deleteAtCurrentPos deletes a single character at the current cursor position
-func (lr *LineReader) deleteAtCurrentPos() {
-	if lr.bufferOffset < len(lr.buffer) {
-		runeBuffer := []rune{}
-		runeBuffer = append(runeBuffer, lr.buffer[:lr.bufferOffset]...)
-		runeBuffer = append(runeBuffer, lr.buffer[lr.bufferOffset+1:]...)
-		lr.buffer = runeBuffer
-
-		hideCursor()
-		lr.renderFromCursor()
-		lr.setCursorPos()
-		showCursor()
-	}
-}
-
-// renderFromCursor renders the input line starting from the current cursor position
-func (lr *LineReader) renderFromCursor() {
-	if lr.isReverseSearch {
-		lr.renderComplete()
 	} else {
-		newLines := 0
-		row, col := lr.setCursorPos()
-		bufferOffset := lr.bufferOffset
-		for len(lr.buffer) > bufferOffset {
-			remaining := len(lr.buffer) - bufferOffset
-			rowLen := (lr.winWidth - col) + 1
-			if rowLen > remaining {
-				rowLen = remaining
-			} else {
-				if row >= lr.winHeight {
-					newLines++
-				}
-			}
+		r.lastSuggestion = ""
+	}
 
-			fmt.Printf("%s", string(lr.buffer[bufferOffset:bufferOffset+rowLen]))
-			bufferOffset += rowLen
-			col = 1
+	hasSuggestions := suggestions != nil && len(suggestions.Items) > 0
+
+	if r.requireFullRender || hasSuggestions {
+		r.MoveCursorToRenderStart()
+		if hasSuggestions {
+			suggString, suggLines := r.makeSuggestionString(suggestions)
+			extraLines += suggLines
+			fmt.Printf("%s", suggString)
 		}
-		lr.cursorRow -= newLines
-		lr.renderEraseForward(true)
-	}
-}
-
-// renderEraseForward renders the erase forward pattern so that input does not "drag" when deletion occurs
-func (lr *LineReader) renderEraseForward(justOne bool) {
-	var totalOffset int
-	if lr.isReverseSearch {
-		totalOffset = len(reverseSearchPrompt) + 4 + len(lr.buffer) + len(lr.lastSearchText)
+		fmt.Printf("%s%s%s%s", prompt, readBufferString, suffix, searchResult)
+		r.requireFullRender = false
+		length = termutils.Measure(prompt) + termutils.Measure(readBufferString) + termutils.Measure(suffix) + termutils.Measure(searchResult)
+		termutils.ClearTerminalFromCursor()
+	} else if isNewLine {
+		// this is the first time rendering this line, we want to render the prompt
+		fmt.Printf("%s", prompt)
+		length = termutils.Measure(prompt)
 	} else {
-		totalOffset = lr.promptLength + len(lr.buffer)
-	}
-	remainder := lr.winWidth - (totalOffset % lr.winWidth)
-	if remainder > 0 {
-		if justOne {
-			remainder = 1
+		pos := r.prevEditOffset
+		if r.editOffset < pos {
+			pos = r.editOffset
 		}
-		remBuf := make([]byte, remainder)
-		for i := 0; i < remainder; i++ {
-			remBuf[i] = ' '
+		r.SetEditCursorPosition(prompt, pos)
+		// the final space is the key to triggering scroll when the cursor reaches the end of the row
+		fmt.Printf("%s%s%s ", string(r.readBuffer[pos:]), suffix, searchResult)
+		if len(searchResult) > 0 {
+			termutils.ClearTerminalFromCursor()
+		} else {
+			termutils.ClearLineFromCursor()
 		}
-		os.Stdout.Write(remBuf)
+		length = termutils.Measure(prompt) + termutils.Measure(readBufferString) + termutils.Measure(suffix) + termutils.Measure(searchResult)
 	}
-}
+	r.prevEditOffset = r.editOffset
 
-// renderComplete renders the complete input text regardless of the cursor position
-func (lr *LineReader) renderComplete() {
-	hideCursor()
-	if lr.isReverseSearch {
-		lr.lastSearchText = []rune(lr.nilShell.History.FindMostRecentMatch(string(lr.buffer)))
-		setCursorPos(lr.cursorRow, 1)
-
-		fmt.Printf("%s%s`): %s", reverseSearchPrompt, string(lr.buffer), string(lr.lastSearchText))
-		lr.renderEraseForward(false)
-		lr.setCursorPos()
-	} else {
-		setCursorPos(lr.cursorRow, 1)
-
-		fmt.Printf("%s", lr.nilShell.Prompt)
-		fmt.Printf("%s", string(lr.buffer))
-		lr.renderEraseForward(false)
-		lr.setCursorPos()
-	}
-	showCursor()
-}
-
-// resizeWindow re-renders according to the window size
-func (lr *LineReader) resizeWindow(render bool) {
-	if lr.DumpChan != nil {
-		lr.DumpChan <- []byte(fmt.Sprintf("<RESIZE_WINDOW>"))
-	}
-	requestCursorPos()
-}
-
-// setCursorPos sets the current cursor position based on the linear offset in the command input
-func (lr *LineReader) setCursorPos() (int, int) {
-	// Determine the linear cursor position, including the prompt
-	var promptOffset int
-	if lr.isReverseSearch {
-		promptOffset = len(reverseSearchPrompt)
-	} else {
-		promptOffset = lr.promptLength
-	}
-	linearCursorPos := promptOffset + lr.bufferOffset
-	curCursorRow := lr.cursorRow + int(linearCursorPos/lr.winWidth)
-	curCursorCol := (linearCursorPos % lr.winWidth) + 1
-
-	// if we're editing on the final row, move back
-	if curCursorRow > lr.winHeight {
-		lr.cursorRow -= (curCursorRow - lr.winHeight)
-		curCursorRow = lr.winHeight
-	}
-	if lr.DumpChan != nil {
-		lr.DumpChan <- []byte(fmt.Sprintf("<SET_CURSOR row:%d col:%d>", curCursorRow, curCursorCol))
-	}
-	setCursorPos(curCursorRow, curCursorCol)
-
-	return curCursorRow, curCursorCol
-}
-
-// Reset the LineReader buffer and return its contents.
-func (lr *LineReader) reset() []rune {
-	if lr.DumpChan != nil {
-		lr.DumpChan <- []byte(fmt.Sprintf("<RESET>"))
-	}
-
-	ret := make([]rune, len(lr.buffer))
-	copy(ret, lr.buffer)
-
-	lr.buffer = lr.buffer[:0]
-	lr.bufferOffset = 0
-
-	return ret
+	return length, (length / r.windowSize.Columns), extraLines
 }
 
 // openInEditor takes the contents of the LineReader buffer and stores it in a temp file, which is
 // then opened in the user's $EDITOR. After the editor is closed the contents of the file are put
 // back into the LineReader buffer.
-func (lr *LineReader) openInEditor() (err error) {
+func (lr *Reader) openInEditor() (err error) {
 	// Create a temp file to store the buffer in.
 	tmpFile, err := os.CreateTemp("", "ns-*")
 	if err != nil {
@@ -518,8 +547,7 @@ func (lr *LineReader) openInEditor() (err error) {
 	editor.Stderr = os.Stderr
 
 	// Clear the buffer and return it.
-	currentBuffer := lr.reset()
-	tmpFile.WriteString(string(currentBuffer))
+	tmpFile.WriteString(string(lr.readBuffer))
 	tmpFile.Close()
 
 	err = editor.Run() // Run the editor
@@ -539,19 +567,92 @@ func (lr *LineReader) openInEditor() (err error) {
 		return
 	}
 
-	contentsAsRunes := convertAndTrim(contents)
-
-	lr.buffer = contentsAsRunes
-	lr.bufferOffset = len(contentsAsRunes)
-	lr.renderComplete()
+	lr.readBuffer = []rune(strings.TrimSuffix(string(contents), "\n"))
+	lr.editOffset = termutils.Measure(string(lr.readBuffer))
+	lr.requireFullRender = true
 	return
 }
 
-// convertAndTrim returns a rune slice for a given byte slice, minus a final line feed character.
-func convertAndTrim(b []byte) []rune {
-	s := string(b)
-	if len(s) > 0 && s[len(s)-1] == '\n' {
-		s = s[:len(s)-1]
+func (r *Reader) parseControlSequence(prompt string, input string) bool {
+	if !strings.HasPrefix(input, "\x1B") {
+		return false
 	}
-	return []rune(s)
+
+	row, col, err := termutils.GetCursorPosition(input)
+	if err == nil {
+		// we reset the cursor position right after we receive a new one, b/c this indicates that a terminal resize
+		// occurred and we need to perform a full render from the beginning of the current input.
+		r.resetStartingCursorPosition(prompt, row, col)
+		return true
+	}
+
+	return true
+}
+
+func (r *Reader) getCurrentPrompt() string {
+	if !r.searchMode {
+		return r.config.PromptFunction()
+	}
+
+	return "(reverse-i-search) `"
+}
+
+// resetsCursorPosition sets the cursor position to the beginning of the current rendering position.
+// It calculates the position based on the current
+func (r *Reader) resetStartingCursorPosition(prompt string, row int, col int) {
+	r.log(fmt.Sprintf("RESET CURSOR POS: r:%d c:%d", row, col))
+	if len(r.readBuffer) > 0 {
+		promptLen := termutils.Measure(prompt)
+		col -= (termutils.Measure(string(r.readBuffer)) + promptLen)
+	}
+
+	for col < 1 {
+		col += r.windowSize.Columns
+		row--
+	}
+
+	if row < 1 {
+		row = 1
+	}
+
+	col = 1
+
+	r.renderPosition.Row = row
+	r.renderPosition.Column = col
+	r.requireFullRender = true
+	termutils.SetCursorPos(r.renderPosition.Row, r.renderPosition.Column)
+}
+
+func (r *Reader) SetEditCursorPosition(prompt string, offset ...int) {
+	pos := r.editOffset
+	if len(offset) > 0 {
+		pos = offset[0]
+	}
+	numCols := termutils.Measure(prompt) + pos
+	col := 1 + (numCols % r.windowSize.Columns)
+	row := r.renderPosition.Row + (numCols / r.windowSize.Columns)
+	termutils.SetCursorPos(row, col)
+	r.editPosition.Row = row
+	r.editPosition.Column = col
+}
+
+func (r *Reader) MoveCursorToRenderEnd(renderLength int) {
+	col := 1 + (renderLength % r.windowSize.Columns)
+	row := r.renderPosition.Row + (renderLength / r.windowSize.Columns)
+	termutils.SetCursorPos(row, col)
+	r.editPosition.Row = row
+	r.editPosition.Column = col
+}
+
+func (r *Reader) MoveCursorToRenderStart() {
+	termutils.SetCursorPos(r.renderPosition.Row, r.renderPosition.Column)
+}
+
+func (r *Reader) log(msg string) {
+	if r.logFile == nil {
+		return
+	}
+
+	r.logFile.WriteString(fmt.Sprintf("%s: %s\n", time.Now(), msg))
+	r.logFile.Sync()
 }

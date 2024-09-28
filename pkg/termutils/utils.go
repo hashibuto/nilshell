@@ -1,11 +1,33 @@
-package term
+package termutils
 
 import (
+	"errors"
+	"fmt"
+	"os"
 	"regexp"
+	"strconv"
 	"strings"
+	"syscall"
+
+	"golang.org/x/sys/unix"
 )
 
-var escapeFinder = regexp.MustCompile("\x1b\\[[^a-zA-Z]+[a-zA-Z]")
+var (
+	escapeFinder    = regexp.MustCompile("\x1b\\[[^a-zA-Z]+[a-zA-Z]")
+	positionMatcher = regexp.MustCompile("\x1b\\[(\\d*);(\\d*)R")
+)
+
+const (
+	TERM_CLEAR               = "\x1B[2J"
+	TERM_CLEAR_END_OF_SCREEN = "\x1B[0J"
+	TERM_CLEAR_END_OF_LINE   = "\x1B[0K"
+	STYLE_RESET              = "\x1b[0m"
+	STYLE_BOLD               = "\x1b[1m"
+)
+
+var (
+	ErrNoMatch = errors.New("no match")
+)
 
 // Measure returns the number of horizonal space the provided text accounts for.  This will filter out escape characters, and treat multi-byte
 // unicode characters as single space tenants.
@@ -86,4 +108,69 @@ func PadRight(text string, maxLength int, gutter int) string {
 // StripTerminalEscapeSequences removes all terminal escape sequences from the provided string, and returns the remaining string
 func StripTerminalEscapeSequences(data []byte) []byte {
 	return escapeFinder.ReplaceAll(data, []byte{})
+}
+
+// ClearTerminal clears the terminal without repositioning the cursor
+func ClearTerminal() {
+	fmt.Printf("%s", TERM_CLEAR)
+}
+
+// GetWindowSize returns the size of the window (row, col)
+func GetWindowSize() (int, int) {
+	winsize, _ := unix.IoctlGetWinsize(int(os.Stdout.Fd()), syscall.TIOCGWINSZ)
+	return int(winsize.Row), int(winsize.Col)
+}
+
+// SetCursorPos sets the current cursor position.  row and col start from 1
+func SetCursorPos(row int, col int) {
+	os.Stdout.WriteString(fmt.Sprintf("\x1b[%d;%dH", row, col))
+}
+
+func CreateFgColor(red int, green int, blue int) string {
+	return fmt.Sprintf("\x1b[38;2;%d;%d;%dm", red, green, blue)
+}
+
+func SetFgColor(red int, green int, blue int) {
+	os.Stdout.WriteString(CreateFgColor(red, green, blue))
+}
+
+func SetBgColor(red int, green int, blue int) {
+	os.Stdout.WriteString(fmt.Sprintf("\x1b[48;2;%d;%d;%dm", red, green, blue))
+}
+
+func ResetStyle() {
+	os.Stdout.WriteString(STYLE_RESET)
+}
+
+func HideCursor() {
+	os.Stdout.WriteString("\x1b[?25l")
+}
+
+func ShowCursor() {
+	os.Stdout.WriteString("\x1b[?25h")
+}
+
+func RequestCursorPos() {
+	os.Stdout.WriteString("\x1b[6n")
+}
+
+// GetCursorPosition returns row, column or an error
+func GetCursorPosition(value string) (int, int, error) {
+	matches := positionMatcher.FindStringSubmatch(value)
+	if len(matches) == 0 {
+		return 0, 0, ErrNoMatch
+	}
+
+	row, _ := strconv.Atoi(matches[1])
+	col, _ := strconv.Atoi(matches[2])
+
+	return row, col, nil
+}
+
+func ClearTerminalFromCursor() {
+	os.Stdout.WriteString(TERM_CLEAR_END_OF_SCREEN)
+}
+
+func ClearLineFromCursor() {
+	os.Stdout.WriteString(TERM_CLEAR_END_OF_LINE)
 }

@@ -1,5 +1,11 @@
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
+github.com/hashibuto/nimble v0.6.0 h1:a4XPlqx+AyLZg0krZyclJP7FC0ujOGP0Onkfh9VgtIc=
+github.com/hashibuto/nimble v0.6.0/go.mod h1:Y0OSUCdlIjuEiwHV0lFE5fWsadw3fB8X83LhGhKpq6s=
+github.com/hashibuto/nimble v0.6.1 h1:D6RfE0Ts9xjN/OVyBvk8V3d2tIyDRM46nT1PpSOXIBc=
+github.com/hashibuto/nimble v0.6.1/go.mod h1:Y0OSUCdlIjuEiwHV0lFE5fWsadw3fB8X83LhGhKpq6s=
+github.com/hashibuto/nimble v0.6.2 h1:uL1vUCGCooxFCai2GNmDrGGVAK3ky2Q5lFH4foD7MCY=
+github.com/hashibuto/nimble v0.6.2/go.mod h1:Y0OSUCdlIjuEiwHV0lFE5fWsadw3fB8X83LhGhKpq6s=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/stretchr/testify v1.9.0 h1:HtqpIVDClZ4nwg75+f6Lvsy/wHu+3BoSGCbBAcpTsTg=

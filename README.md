@@ -11,31 +11,48 @@ What it doesn't do
 
 - Any sort of argument parsing / tokenization
 
-For a full CLI parser implementation using nilshell, check out [Artillery](https://github.com/hashibuto/artillery) 
+For a full CLI parser implementation using nilshell, check out [Commander](https://github.com/hashibuto/commander)
 
 ## Usage
 
 ```
-import "github.com/hashibuto/nilshell"
-
-ns := NewNilShell(
-    "» ", 
-    func(beforeCursor, afterCursor string, full string) []*ns.AutoComplete {
-        // Autocompletion happens here, perhaps tokenization, and the last token before the cursor is
-        // fed to a lookup to find potential matches
-        return nil
-    },
-    func(ns *ns.NilShell, cmd string) {
-        // Perform tokenization, command lookup, and execution
-    },
+import (
+    ns "github.com/hashibuto/nilshell"
 )
 
-// Attach saved command history
-ns.History = NewHistory(myLoadedHistory)
+config := ns.ReaderConfig{
 
-ns.ReadUntilTerm()
+    CompletionFunction: func(beforeCursor string, afterCursor string, full string) *ns.Suggestions {
+        // This is where you would return tab completion suggestions based on the input before the cursor, perhaps after the
+        // cursor, or even the entire line buffer.
 
-// Save command history
-myHistory := ns.History.Export()
-// write myHistory it to disk
+        return &ns.Suggestions{
+            Total: 0
+            Items: []*ns.Suggestion{}
+        }
+    },
+
+    ProcessFunction: func(text string) error {
+        // text contains the command to be processed by your own command interpreter
+        return nil
+    }
+
+    // implement your own history manager if you want to persist history across multiple invocations, or use the default (nil)
+	HistoryManager: nil,
+
+    PromptFunction: func() string {
+        // Return a prompt with terminal escape chars to add style
+
+        return "$ "
+    }
+	Debug: false,
+
+    // enable the log file to dump debugging info to a tailable log file
+    LogFile: "",
+}
+
+r := NewReader(config)
+
+// block until the process captures SIGINT or SIGTERM
+r.ReadLoop()
 ```

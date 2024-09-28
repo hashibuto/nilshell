@@ -5,6 +5,7 @@ go 1.19
 require golang.org/x/term v0.2.0
 
 require (
+	github.com/hashibuto/nimble v0.6.2
 	github.com/stretchr/testify v1.9.0
 	golang.org/x/sys v0.2.0
 )
