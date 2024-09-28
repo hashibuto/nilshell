@@ -3,9 +3,11 @@ package ns
 import (
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"log/slog"
 	"os"
+	"os/exec"
 	"os/signal"
 	"runtime/debug"
 	"strings"
@@ -28,7 +30,7 @@ type Suggestion struct {
 }
 
 type Suggestions struct {
-	Count int
+	Total int // reflects the total (could be longer than len(.Items)
 	Items []*Suggestion
 }
 
@@ -75,25 +77,25 @@ func NewReader(config ReaderConfig) *Reader {
 	if config.CompletionFunction == nil {
 		config.CompletionFunction = func(beforeCursor, afterCursor, full string) *Suggestions {
 			return &Suggestions{
-				Count: 0,
+				Total: 0,
 				Items: []*Suggestion{},
 			}
 		}
+	}
 
-		if config.ProcessFunction == nil {
-			config.ProcessFunction = func(s string) error {
-				return nil
-			}
+	if config.ProcessFunction == nil {
+		config.ProcessFunction = func(s string) error {
+			return nil
 		}
+	}
 
-		if config.HistoryManager == nil {
-			config.HistoryManager = NewBasicHistoryManager()
-		}
+	if config.HistoryManager == nil {
+		config.HistoryManager = NewBasicHistoryManager(100)
+	}
 
-		if config.PromptFunction == nil {
-			config.PromptFunction = func() string {
-				return "$ "
-			}
+	if config.PromptFunction == nil {
+		config.PromptFunction = func() string {
+			return "$ "
 		}
 	}
 
@@ -211,6 +213,7 @@ func (r *Reader) readLine() (string, error) {
 	if err != nil {
 		return "", err
 	}
+	var suggestions *Suggestions
 
 	defer func() {
 		r.readBuffer = []rune{}
@@ -245,11 +248,20 @@ func (r *Reader) readLine() (string, error) {
 	stdinBuf := make([]byte, 100)
 
 	var historyIter HistoryIterator
+	var suggLines int
 	for {
 		if r.initialized {
 			termutils.HideCursor()
-			renderLines = r.render(isNewLine)
+			renderLines, suggLines = r.render(isNewLine, suggestions)
+			r.log(fmt.Sprintf("sugg lines: %d", suggLines))
+			if suggLines > 0 {
+				r.renderPosition.Row += suggLines
+				if r.renderPosition.Row > r.windowSize.Rows {
+					r.renderPosition.Row = r.windowSize.Rows
+				}
+			}
 			isNewLine = false
+			suggestions = nil
 			r.SetEditCursorPosition()
 			termutils.ShowCursor()
 			r.log(fmt.Sprintf("OFFSET: %d  CUR_ROW: %d  CUR_COL: %d", r.editOffset, r.editPosition.Row, r.editPosition.Column))
@@ -322,7 +334,14 @@ func (r *Reader) readLine() (string, error) {
 				}
 				r.requireFullRender = true
 				r.searchMode = false
+				continue
 			}
+
+			if len(r.readBuffer) == 0 {
+				continue
+			}
+
+			suggestions = r.config.CompletionFunction(string(r.readBuffer[:r.editOffset]), string(r.readBuffer[r.editOffset:]), string(r.readBuffer))
 		case KEY_END:
 			r.editOffset = len(r.readBuffer)
 		case KEY_HOME:
@@ -334,6 +353,14 @@ func (r *Reader) readLine() (string, error) {
 		case KEY_CTRL_L:
 			termutils.ClearTerminal()
 			termutils.SetCursorPos(1, 1)
+		case KEY_CTRL_T:
+			if err := r.openInEditor(); err != nil {
+				fmt.Fprintf(os.Stderr, "\r\n%s\n", err)
+				// Carriage Return (\r) to return the cursor to the left hand side (like a typewriter)
+				// Line Feed (\n) to bring us to a new line
+				// Print the error, and a final Line Feed to ensure the next prompt is up on a new line
+				return "", ErrInterrupt
+			}
 		default:
 			if r.parseControlSequence(inputData) {
 				continue
@@ -379,9 +406,54 @@ func (r *Reader) updateBuffer(data string) {
 	r.readBuffer = newRunes
 }
 
+func (r *Reader) makeSuggestionString(suggesions *Suggestions) (string, int) {
+	fg := termutils.CreateFgColor(83, 150, 237)
+	lines := 1
+	numSuggestions := len(suggesions.Items)
+	totalSuggestions := suggesions.Total
+	suggString := []string{fmt.Sprintf("\r\n%s", fg)}
+
+	var header string
+	if numSuggestions == totalSuggestions {
+		header = fmt.Sprintf("%s%d suggestions:%s%s", termutils.STYLE_BOLD, numSuggestions, termutils.STYLE_RESET, fg)
+	} else {
+		header = fmt.Sprintf("%s%d suggestions (%d more...):%s%s", termutils.STYLE_BOLD, numSuggestions, totalSuggestions-numSuggestions, termutils.STYLE_RESET, fg)
+	}
+
+	lines += (termutils.Measure(header) / r.windowSize.Columns) + 1
+	suggString = append(suggString, header, "\r\n")
+
+	disp := make([]string, len(suggesions.Items))
+	for i, item := range suggesions.Items {
+		disp[i] = item.Display
+	}
+
+	var colNum int
+	colWidth, numCols := CalculateColumnWidth(disp, r.windowSize.Columns, 2, 2)
+	for i, item := range suggesions.Items {
+		suggString = append(suggString, termutils.PadRight(item.Display, colWidth, 2))
+		colNum = i % numCols
+		if colNum == numCols-1 {
+			// End of line
+			suggString = append(suggString, "\r\n")
+			lines++
+		}
+	}
+
+	if suggString[len(suggString)-1] != "\r\n" {
+		suggString = append(suggString, "\r\n")
+		lines++
+	}
+
+	suggString = append(suggString, termutils.STYLE_RESET)
+
+	return strings.Join(suggString, ""), lines
+}
+
 // render renders the edit "line" and returns the number of screen rows used in the render
-func (r *Reader) render(isNewLine bool) int {
+func (r *Reader) render(isNewLine bool, suggestions *Suggestions) (int, int) {
 	length := 0
+	extraLines := 0
 	prompt := r.getCurrentPrompt()
 	suffix := ""
 	readBufferString := string(r.readBuffer)
@@ -400,8 +472,15 @@ func (r *Reader) render(isNewLine bool) int {
 		r.lastSuggestion = ""
 	}
 
-	if r.requireFullRender {
+	hasSuggestions := suggestions != nil && len(suggestions.Items) > 0
+
+	if r.requireFullRender || hasSuggestions {
 		r.MoveCursorToRenderStart()
+		if hasSuggestions {
+			suggString, suggLines := r.makeSuggestionString(suggestions)
+			extraLines += suggLines
+			fmt.Printf("%s", suggString)
+		}
 		fmt.Printf("%s%s%s%s", prompt, readBufferString, suffix, searchResult)
 		r.requireFullRender = false
 		length = termutils.Measure(prompt) + termutils.Measure(readBufferString) + termutils.Measure(suffix) + termutils.Measure(searchResult)
@@ -422,7 +501,57 @@ func (r *Reader) render(isNewLine bool) int {
 	}
 	r.prevEditOffset = r.editOffset
 
-	return length / r.windowSize.Columns
+	return (length / r.windowSize.Columns), extraLines
+}
+
+// openInEditor takes the contents of the LineReader buffer and stores it in a temp file, which is
+// then opened in the user's $EDITOR. After the editor is closed the contents of the file are put
+// back into the LineReader buffer.
+func (lr *Reader) openInEditor() (err error) {
+	// Create a temp file to store the buffer in.
+	tmpFile, err := os.CreateTemp("", "ns-*")
+	if err != nil {
+		return
+	}
+	defer os.Remove(tmpFile.Name())
+
+	// Get the user's editor, and open the file in it.
+	editorName := os.Getenv("EDITOR")
+	if editorName == "" {
+		editorName = "vi"
+	}
+
+	// Setup the exec
+	editor := exec.Command(editorName, tmpFile.Name())
+	editor.Stdin = os.Stdin
+	editor.Stdout = os.Stdout
+	editor.Stderr = os.Stderr
+
+	// Clear the buffer and return it.
+	tmpFile.WriteString(string(lr.readBuffer))
+	tmpFile.Close()
+
+	err = editor.Run() // Run the editor
+	if err != nil {
+		return
+	}
+
+	// Open that temp file again, and put its contents back into the buffer.
+	tmpFile, err = os.Open(tmpFile.Name())
+	if err != nil {
+		return
+	}
+	defer tmpFile.Close()
+
+	contents, err := io.ReadAll(tmpFile)
+	if err != nil {
+		return
+	}
+
+	lr.readBuffer = []rune(strings.TrimSuffix(string(contents), "\n"))
+	lr.editOffset = termutils.Measure(string(lr.readBuffer))
+	lr.requireFullRender = true
+	return
 }
 
 func (r *Reader) parseControlSequence(input string) bool {

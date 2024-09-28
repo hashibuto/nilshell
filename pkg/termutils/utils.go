@@ -22,6 +22,7 @@ const (
 	TERM_CLEAR_END_OF_SCREEN = "\x1B[0J"
 	TERM_CLEAR_END_OF_LINE   = "\x1B[0K"
 	STYLE_RESET              = "\x1b[0m"
+	STYLE_BOLD               = "\x1b[1m"
 )
 
 var (
@@ -125,8 +126,12 @@ func SetCursorPos(row int, col int) {
 	os.Stdout.WriteString(fmt.Sprintf("\x1b[%d;%dH", row, col))
 }
 
+func CreateFgColor(red int, green int, blue int) string {
+	return fmt.Sprintf("\x1b[38;2;%d;%d;%dm", red, green, blue)
+}
+
 func SetFgColor(red int, green int, blue int) {
-	os.Stdout.WriteString(fmt.Sprintf("\x1b[38;2;%d;%d;%dm", red, green, blue))
+	os.Stdout.WriteString(CreateFgColor(red, green, blue))
 }
 
 func SetBgColor(red int, green int, blue int) {
