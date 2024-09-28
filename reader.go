@@ -24,16 +24,6 @@ var (
 	ErrEof       = errors.New("eof")
 )
 
-type Suggestion struct {
-	Display string
-	Value   string
-}
-
-type Suggestions struct {
-	Total int // reflects the total (could be longer than len(.Items)
-	Items []*Suggestion
-}
-
 type Reader struct {
 	initialized       bool
 	config            ReaderConfig
