@@ -9,6 +9,7 @@ import (
 type BasicHistoryManager struct {
 	index   *nimble.IndexedDequeue
 	maxKeep int
+	prev    string
 }
 
 type BasicHistoryIterator struct {
@@ -41,6 +42,10 @@ func NewBasicHistoryManager(maxKeep int) *BasicHistoryManager {
 }
 
 func (h *BasicHistoryManager) Push(value string) {
+	if value == h.prev {
+		return
+	}
+	h.prev = value
 	h.index.Push(value)
 	if h.index.Size() > h.maxKeep {
 		h.index.Pop()

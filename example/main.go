@@ -80,6 +80,11 @@ func main() {
 			return nil
 		},
 		CompletionFunction: completer,
+		HistoryManager:     ns.NewPersistedHistoryManager(10, "/tmp/example.hist"),
+		PromptFunction: func() string {
+			return "$ "
+			//return fmt.Sprintf("%s$%s ", termutils.CreateFgColor(0, 255, 255), termutils.STYLE_RESET)
+		},
 	})
 	r.ReadLoop()
 }
