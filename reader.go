@@ -345,6 +345,16 @@ func (r *Reader) readLine() (string, error) {
 			}
 
 			suggestions = r.config.CompletionFunction(string(r.readBuffer[:r.editOffset]), string(r.readBuffer[r.editOffset:]), string(r.readBuffer))
+			if suggestions == nil {
+				continue
+			}
+
+			if len(suggestions.Items) != 1 {
+				continue
+			}
+
+			r.completeText([]rune(suggestions.Items[0].Value))
+			suggestions = nil
 		case KEY_END:
 			r.editOffset = len(r.readBuffer)
 		case KEY_HOME:
@@ -372,6 +382,40 @@ func (r *Reader) readLine() (string, error) {
 			}
 
 			r.updateBuffer(inputData)
+		}
+	}
+}
+
+// completeText performs an autocomplete operation
+func (lr *Reader) completeText(input []rune) {
+	// hunt back to the previous either space, or beginning of the text from the current cursor position
+	inputStr := string(input)
+
+	for i := lr.editOffset - 1; i >= 0; i-- {
+		if lr.readBuffer[i] == ' ' || i == 0 {
+			j := i
+			if lr.readBuffer[i] == ' ' {
+				j++
+			}
+			strPrefix := string(lr.readBuffer[j:lr.editOffset])
+
+			if !strings.HasPrefix(inputStr, strPrefix) {
+				return
+			}
+
+			runePrefix := []rune(strPrefix)
+			b := []rune{}
+			if lr.editOffset > 0 {
+				b = append(b, lr.readBuffer[:lr.editOffset]...)
+			}
+			b = append(b, input[len(runePrefix):]...)
+			if lr.editOffset < len(lr.readBuffer) {
+				b = append(b, lr.readBuffer[lr.editOffset:]...)
+			}
+
+			lr.readBuffer = b
+			lr.requireFullRender = true
+			lr.editOffset += len(input[len(runePrefix):])
 		}
 	}
 }
